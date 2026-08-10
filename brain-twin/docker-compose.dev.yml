@@ -1,0 +1,65 @@
+# Brain Twin 開発用 Docker Compose(本番用 docker-compose.yml とは独立)
+#
+# 本番用(apps/*/Dockerfile によるイメージビルド。npm install & vite build を
+# 含み、毎回数分かかる)はそのまま維持しつつ、開発中はプレーンな公式ベース
+# イメージ+ソースのボリュームマウントだけで、vite開発サーバー(HMR対応)・
+# uvicorn --reload を即座に起動できるようにする。
+#
+# 【設計上の注意】`docker compose -f docker-compose.yml -f docker-compose.dev.yml`
+# のようなオーバーライド方式ではなく、あえて独立した単体ファイルにしてある。
+# Docker Composeは同じサービスに build: と image: を両方指定した場合、
+# 「build: の内容でビルドし、image: の名前でタグ付けする」という意味になり、
+# 「image: を優先してビルドをスキップする」動作にはならない。オーバーライドで
+# build: を無効化するには !reset 等のYAMLタグが必要だが、Composeのバージョンに
+# よって対応状況が異なるため、確実性を優先して独立ファイルにした。
+#
+# データは本番の ./data とは別の ./data-dev を使う(開発中の試行錯誤で
+# 本番データを誤って書き換えないための安全策)。
+#
+# 使い方:
+#   docker compose -f docker-compose.dev.yml up
+#
+# 初回のみ npm install / pip install に時間がかかるが、独自イメージの
+# ビルドは発生しない(node:20-slim / python:3.12-slim の公式イメージpullのみ、
+# 通常は本番ビルドで既にローカルにキャッシュ済み)。2回目以降、コード変更は
+# ボリュームマウント経由でそのまま反映される(vite HMR / uvicorn --reload)。
+#
+# 本番用の `docker compose up -d`(このファイルを指定しない場合)には
+# 一切影響しない。
+
+name: brain-twin-dev
+
+services:
+  server-dev:
+    image: python:3.12-slim
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=/app/data
+      - PACKAGES_DIR=/packages
+    volumes:
+      - ./apps/server:/app
+      - ./packages:/packages
+      - ./data-dev:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: >
+      sh -c "pip install --no-cache-dir --break-system-packages -q -r requirements.txt
+      && alembic upgrade head
+      && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  web-dev:
+    image: node:20-slim
+    working_dir: /app/web
+    volumes:
+      - ./apps/web:/app/web
+      - web-dev-node-modules:/app/web/node_modules  # ホスト側node_modulesと衝突しないよう名前付きボリュームに分離
+    command: sh -c "npm install && npx vite --host 0.0.0.0 --port 80"
+    depends_on:
+      - server-dev
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
+
+volumes:
+  web-dev-node-modules:

@@ -1,0 +1,220 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://brain-twin.local/schemas/thought_split.schema.json",
+  "title": "ThoughtSplitResult",
+  "description": "Ollamaによる『一つの入力(capture)を複数の思考(thought)へ分割する』処理の出力スキーマ。仕様書7.2/7.3に対応。",
+  "type": "object",
+  "required": [
+    "thoughts"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "thoughts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/thought"
+      }
+    }
+  },
+  "definitions": {
+    "confidence": {
+      "description": "0.0-1.0の推定値。断定ではなく推定として扱うこと。不明な場合はnull。",
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "thought_type": {
+      "type": "string",
+      "enum": [
+        "thought",
+        "action_candidate",
+        "idea",
+        "emotion",
+        "body_state",
+        "memory",
+        "concern",
+        "question",
+        "observation",
+        "appointment",
+        "shopping",
+        "project",
+        "family",
+        "work",
+        "uncertain_deadline",
+        "unfinished_thought",
+        "background_noise"
+      ]
+    },
+    "entity": {
+      "type": "object",
+      "required": [
+        "name",
+        "entity_type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "entity_type": {
+          "type": "string",
+          "enum": [
+            "emotion",
+            "idea",
+            "state",
+            "topic",
+            "person",
+            "place",
+            "project",
+            "organization",
+            "other"
+          ],
+          "description": "ラベルの種類。固定カテゴリに縛られず、内容から動的に生成する: emotion(感情・気持ち。例: もやもや、疲れ、不安)、idea(アイデア・やりたいこと。例: FORGEの新機能、いつかやりたい)、state(状態・体調。例: 眠い、体が重い)、topic(上記に当てはまらない一般的な話題。例: 仕事、将来、家族)、person/place/project/organization: 従来通りの固有名詞。other: いずれにも当てはまらない場合。"
+        }
+      }
+    },
+    "possible_date": {
+      "type": "object",
+      "required": [
+        "raw_text"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "raw_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "resolved_date": {
+          "description": "capture日時基準でISO8601 (YYYY-MM-DD) に解決できた場合のみ。断定できなければnull。",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "precision": {
+          "type": "string",
+          "enum": [
+            "day",
+            "week",
+            "month",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "thought": {
+      "type": "object",
+      "required": [
+        "content",
+        "types"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 400
+        },
+        "types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/definitions/thought_type"
+          }
+        },
+        "action_intent": {
+          "$ref": "#/definitions/confidence"
+        },
+        "resurface_need": {
+          "$ref": "#/definitions/confidence"
+        },
+        "emotional_weight": {
+          "$ref": "#/definitions/confidence"
+        },
+        "certainty": {
+          "$ref": "#/definitions/confidence"
+        },
+        "importance": {
+          "$ref": "#/definitions/confidence"
+        },
+        "urgency": {
+          "$ref": "#/definitions/confidence"
+        },
+        "mental_load": {
+          "$ref": "#/definitions/confidence"
+        },
+        "forget_safely_score": {
+          "$ref": "#/definitions/confidence"
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/entity"
+          },
+          "default": []
+        },
+        "possible_dates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/possible_date"
+          },
+          "default": []
+        },
+        "project_names": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "default": []
+        },
+        "people": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "default": []
+        },
+        "places": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "default": []
+        },
+        "sentiment": {
+          "description": "この思考の全体的な色合い(診断ではなく、表示上の色分けのための軽い分類)。positive: 前向き・安堵・達成等。negative: つらい・不満・不安等。neutral: 事実の記録・淡々とした内容。idea_goal: アイデア・目標・やってみたいこと。判断できない場合はnull。",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "positive",
+            "neutral",
+            "negative",
+            "idea_goal",
+            null
+          ]
+        }
+      }
+    }
+  }
+}

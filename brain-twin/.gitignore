@@ -1,0 +1,57 @@
+# 環境変数・シークレット
+.env
+
+# 個人データ(仕様書14/15: Gitに含めない)
+data/database/*
+data/backups/*
+data/exports/*
+!data/database/.gitkeep
+!data/backups/.gitkeep
+!data/exports/.gitkeep
+
+# 統合テスト用の使い捨てデータ(scripts/verify_integration.sh参照)
+data-test/database/*
+data-test/backups/*
+data-test/exports/*
+data-test/logs/*
+!data-test/database/.gitkeep
+!data-test/backups/.gitkeep
+!data-test/exports/.gitkeep
+!data-test/logs/.gitkeep
+
+# Node
+node_modules/
+apps/web/dist/
+apps/web/dev-dist/
+apps/web/.vite/
+*.tsbuildinfo
+apps/web/vite.config.js
+apps/web/vite.config.d.ts
+apps/web/playwright-report/
+apps/web/test-results/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+apps/server/.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# エディタ
+.vscode/
+.idea/
+
+# verify_all実行時の最新ログ(scripts/verify_all.sh/.ps1が毎回生成し直す)
+verification/latest/*
+!verification/latest/.gitkeep
+
+# 開発用compose(docker-compose.dev.yml)専用のデータ(本番data/とは別)
+data-dev/database/*
+data-dev/backups/*
+data-dev/exports/*
+!data-dev/database/.gitkeep
+!data-dev/backups/.gitkeep
+!data-dev/exports/.gitkeep

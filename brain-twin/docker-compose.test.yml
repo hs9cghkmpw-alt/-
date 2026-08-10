@@ -1,0 +1,56 @@
+# Brain Twin 統合テスト専用 Docker Compose
+#
+# 本番の docker-compose.yml とは完全に分離されている(別プロジェクト名、
+# 別データディレクトリ、別ポート、別コンテナ名)。通常利用中の本番データを
+# 誤って消すことはない。
+#
+# 使い方は scripts/verify_integration.sh (.ps1) を参照。単体でも:
+#   docker compose -f docker-compose.test.yml up -d --build
+#   docker compose -f docker-compose.test.yml down -v
+name: brain-twin-test
+
+services:
+  server-test:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    environment:
+      - DATA_DIR=/app/data
+      - PACKAGES_DIR=/packages
+      - OLLAMA_BASE_URL=http://fake-ollama-test:11434
+      - OLLAMA_MODEL=qwen2.5:7b-instruct
+      - OLLAMA_EMBEDDING_MODEL=bge-m3
+      - LOG_LEVEL=INFO
+      - JOB_POLL_INTERVAL_SECONDS=1
+    volumes:
+      - ./data-test:/app/data
+    depends_on:
+      - fake-ollama-test
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  web-test:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      # 本番(8080)と衝突しないよう別ポートにする。127.0.0.1限定は本番同様。
+      - "127.0.0.1:${TEST_WEB_PORT:-18080}:80"
+    depends_on:
+      - server-test
+    restart: "no"
+
+  fake-ollama-test:
+    build:
+      context: .
+      dockerfile: testing/fake_ollama/Dockerfile
+    restart: "no"
+    ports:
+      # テストスクリプトが /_control/* を直接curlできるよう公開する
+      # (本番のOllamaとは異なり、これはテスト専用の使い捨てコンテナのため問題ない)。
+      - "127.0.0.1:${TEST_OLLAMA_PORT:-11435}:11434"

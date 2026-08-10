@@ -1,0 +1,77 @@
+name: brain-twin
+
+# ------------------------------------------------------------------
+# Tailscale内部限定運用が前提のため、公開ポートはすべて127.0.0.1(loopback)に
+# バインドする。一般ネットワークからは何も見えない。iPhoneからアクセスする場合は
+# `tailscale serve` を使うこと(docs/TAILSCALE_SETUP.md参照)。
+# Tailscale Funnelやルーターのポート開放は絶対に行わないこと(仕様書14/25)。
+#
+# 【追加修正】Web(Nginx)とAPI(FastAPI)は同一オリジン化した。
+# 外部(Tailscale)へ公開するのは web サービスの1ポートのみで、
+# /api/* はNginxがserverコンテナへ内部プロキシする(apps/web/nginx.conf参照)。
+# そのため server サービスは外部向けポートを一切公開しない
+# (docker compose exec server ... で直接デバッグすることは引き続き可能)。
+# tailscale serve は web のポートだけを対象にすればよい。
+#
+# Ollamaはデフォルトではこのcomposeで起動せず、ホスト側に別途インストールした
+# Ollama (http://host.docker.internal:11434) を使う構成をデフォルトにする
+# (仕様書16: GPU利用やOSとの相性を考慮)。
+# Docker内でOllamaも動かしたい場合は、
+#   docker compose --profile dockerized-ollama up -d
+# として起動し、.envで OLLAMA_BASE_URL=http://ollama:11434 に変更すること。
+# ------------------------------------------------------------------
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=/app/data
+      - PACKAGES_DIR=/packages
+    volumes:
+      - ./data:/app/data
+    # 外部公開ポートなし(webコンテナからのみ内部ネットワーク経由で到達可能)。
+    # デバッグでホストから直接叩きたい場合は、コミットしない
+    # docker-compose.override.yml に ports: ["127.0.0.1:8000:8000"] を追加するか、
+    # `docker compose exec server curl http://localhost:8000/...` を使うこと。
+    extra_hosts:
+      # Linux上のDocker Engineでは host.docker.internal が自動解決されないため明示する。
+      # macOS/Windows(Docker Desktop)ではこの行があっても無害。
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    # Tailscale経由で外部(iPhone)から到達する唯一の公開ポート。
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  # 任意: Docker内でOllamaも動かす場合のみ有効化するサービス。
+  # 有効化方法: `docker compose --profile dockerized-ollama up -d`
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["dockerized-ollama"]
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    restart: unless-stopped
+    # NVIDIA GPUを使う場合、docker-compose.override.yml等で
+    # deploy.resources.reservations.devices を追加すること(README参照)。
+
+volumes:
+  ollama-models:
