@@ -107,6 +107,7 @@ class ThoughtOut(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     deleted_at: str | None = None
+    done_at: str | None = None
 
 
 class ThoughtListResponse(BaseModel):

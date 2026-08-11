@@ -61,6 +61,7 @@ class Thought(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    done_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class Entity(Base):

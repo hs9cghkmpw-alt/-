@@ -105,3 +105,59 @@ async def create_feedback(
         event_value=event.event_value,
         created_at=iso(event.created_at),
     )
+
+
+@router.post("/api/thoughts/{thought_id}/done", response_model=ThoughtOut)
+async def mark_thought_done(
+    thought_id: str,
+    db: AsyncSession = Depends(get_db),
+    _device: SyncDevice = Depends(get_current_device),
+) -> ThoughtOut:
+    """todoとしての『完了』。冪等(すでに完了済みなら何もせずそのまま返す)。
+    履歴として feedback_events にも 'marked_done' を1件残す(既存のフィードバック
+    と同じ考え方: 上書きせず追記する)。"""
+    result = await db.execute(select(Thought).where(Thought.id == thought_id, Thought.deleted_at.is_(None)))
+    thought = result.scalar_one_or_none()
+    if thought is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="見つかりませんでした")
+
+    if thought.done_at is None:
+        now = datetime.now(timezone.utc)
+        thought.done_at = now
+        thought.updated_at = now
+        db.add(
+            FeedbackEvent(
+                id=new_id(),
+                thought_id=thought_id,
+                capture_id=thought.capture_id,
+                event_type="marked_done",
+                event_value=None,
+                context_json=None,
+                created_at=now,
+            )
+        )
+        await db.commit()
+
+    entities = await load_thought_entities(db, thought_id)
+    return thought_to_out(thought, entities)
+
+
+@router.delete("/api/thoughts/{thought_id}/done", response_model=ThoughtOut)
+async def unmark_thought_done(
+    thought_id: str,
+    db: AsyncSession = Depends(get_db),
+    _device: SyncDevice = Depends(get_current_device),
+) -> ThoughtOut:
+    """todoとしての『再オープン』(完了の取り消し)。冪等。"""
+    result = await db.execute(select(Thought).where(Thought.id == thought_id, Thought.deleted_at.is_(None)))
+    thought = result.scalar_one_or_none()
+    if thought is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="見つかりませんでした")
+
+    if thought.done_at is not None:
+        thought.done_at = None
+        thought.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    entities = await load_thought_entities(db, thought_id)
+    return thought_to_out(thought, entities)

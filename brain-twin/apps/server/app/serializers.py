@@ -62,6 +62,8 @@ def thought_to_out(t: Thought, entities: list[ThoughtEntityOut] | None = None) -
         analysis_version=t.analysis_version,
         created_at=iso(t.created_at),
         updated_at=iso(t.updated_at),
+        deleted_at=iso(t.deleted_at),
+        done_at=iso(t.done_at),
     )
 
 

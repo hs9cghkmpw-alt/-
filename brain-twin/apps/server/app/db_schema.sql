@@ -60,12 +60,14 @@ CREATE TABLE IF NOT EXISTS thoughts (
     analysis_version       TEXT,
     created_at             TEXT NOT NULL,
     updated_at             TEXT NOT NULL,
-    deleted_at             TEXT
+    deleted_at             TEXT,
+    done_at                TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_thoughts_capture_id ON thoughts (capture_id);
 CREATE INDEX IF NOT EXISTS idx_thoughts_updated_at ON thoughts (updated_at);
 CREATE INDEX IF NOT EXISTS idx_thoughts_deleted_at ON thoughts (deleted_at);
+CREATE INDEX IF NOT EXISTS idx_thoughts_done_at ON thoughts (done_at);
 
 -- ==================================================================
 -- entities: 動的ラベル(人物/場所/プロジェクト/感情/話題等)の正規化辞書

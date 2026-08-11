@@ -23,6 +23,7 @@ from app.routers import (
     status,
     sync,
     thoughts,
+    todos,
 )
 
 settings = get_settings()
@@ -98,5 +99,5 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
-for r in (health, status, pairing, sync, captures, thoughts, search, processing, jobs, settings_router, export, backup):
+for r in (health, status, pairing, sync, captures, thoughts, todos, search, processing, jobs, settings_router, export, backup):
     app.include_router(r.router)
