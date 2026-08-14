@@ -1,0 +1,17 @@
+# 個人のVault(Markdown = 正本)とSQLite index。Gitには含めない。
+vault/
+data/
+
+# Obsidianがフォルダを開いた際に作る設定ディレクトリ
+.obsidian/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db

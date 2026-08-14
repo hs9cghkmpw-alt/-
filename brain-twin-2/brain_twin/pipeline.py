@@ -1,0 +1,135 @@
+"""Raw Log -> Daily Log -> (Memory) の一連の処理(指示書3・20章)。"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from brain_twin import classify, db, memory_io, raw_log_io, vault
+from brain_twin.config import Config
+
+
+@dataclass
+class ProcessSummary:
+    total_inputs: int = 0
+    daily_log_saved: int = 0
+    memories_created: int = 0
+    kept_as_chat: int = 0
+    memory_ids: list[str] = field(default_factory=list)
+
+
+def add_capture(config: Config, text: str, source: str = "cli") -> str:
+    """指示書39章: `add` は Raw Log へ保存するだけ(整理はしない)。"""
+    vault.ensure_vault(config)
+    text = text.strip()
+    if not text:
+        raise ValueError("空の入力は保存できません。")
+
+    raw_log = raw_log_io.write_raw_log(config, text, source)
+
+    with db.connect(config) as conn:
+        db.upsert_raw_log(
+            conn, id=raw_log.id, text=raw_log.text, source=raw_log.source,
+            created_at=raw_log.created_at, file_path=raw_log.file_path, processed_at=None,
+        )
+        conn.commit()
+
+    return raw_log.id
+
+
+def process_all(config: Config) -> ProcessSummary:
+    """未処理のRaw LogをDaily Logへ保存し、ダミー分類器でMemory候補を判定して
+    Long-term Memoryを生成する(指示書3・20章)。"""
+    vault.ensure_vault(config)
+    summary = ProcessSummary()
+
+    unprocessed = raw_log_io.list_raw_logs(config, unprocessed_only=True)
+    summary.total_inputs = len(unprocessed)
+    if not unprocessed:
+        return summary
+
+    with db.connect(config) as conn:
+        touched_dates: set[str] = set()
+
+        for raw_log in unprocessed:
+            raw_log_io.append_to_daily_log(config, raw_log)
+            date_str = datetime.fromisoformat(raw_log.created_at).strftime("%Y-%m-%d")
+            touched_dates.add(date_str)
+            summary.daily_log_saved += 1
+
+            result = classify.classify(raw_log.text)
+            if result.is_memory_worthy:
+                memory = memory_io.build_memory(raw_log, result)
+                memory = memory_io.write_memory(config, memory)
+                db.upsert_memory(
+                    conn,
+                    id=memory.id, type=memory.type.value, created_at=memory.created_at,
+                    event_date=memory.event_date, importance=memory.importance,
+                    confidence=memory.confidence, source=memory.source, status=memory.status.value,
+                    title=memory.title, content=memory.content, raw_log_id=memory.raw_log_id,
+                    file_path=memory.file_path, topics_json=json.dumps(memory.topics, ensure_ascii=False),
+                )
+                summary.memories_created += 1
+                summary.memory_ids.append(memory.id)
+            else:
+                summary.kept_as_chat += 1
+
+            raw_log_io.mark_processed(config, raw_log)
+            db.upsert_raw_log(
+                conn, id=raw_log.id, text=raw_log.text, source=raw_log.source,
+                created_at=raw_log.created_at, file_path=raw_log.file_path,
+                processed_at=raw_log.processed_at,
+            )
+
+        for date_str in touched_dates:
+            daily_path = config.daily_dir / f"{date_str}.md"
+            db.upsert_daily_log(
+                conn, date=date_str, file_path=vault.relative_to_vault(daily_path, config),
+                updated_at=datetime.now().astimezone().isoformat(),
+            )
+
+        conn.commit()
+
+    return summary
+
+
+def reindex(config: Config) -> dict[str, int]:
+    """VaultのMarkdownをすべて読み直し、SQLite indexを完全に作り直す
+    (指示書25・34章: DBが壊れてもMarkdownから再構築できること)。"""
+    vault.ensure_vault(config)
+    db.reset_schema(config.db_path)
+
+    counts = {"raw_logs": 0, "daily_logs": 0, "memories": 0}
+
+    with db.connect(config) as conn:
+        for raw_log in raw_log_io.list_raw_logs(config):
+            db.upsert_raw_log(
+                conn, id=raw_log.id, text=raw_log.text, source=raw_log.source,
+                created_at=raw_log.created_at, file_path=raw_log.file_path,
+                processed_at=raw_log.processed_at,
+            )
+            counts["raw_logs"] += 1
+
+        if config.daily_dir.exists():
+            for path in sorted(config.daily_dir.glob("*.md")):
+                date_str = path.stem
+                db.upsert_daily_log(
+                    conn, date=date_str, file_path=vault.relative_to_vault(path, config),
+                    updated_at=datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat(),
+                )
+                counts["daily_logs"] += 1
+
+        for memory in memory_io.list_all_memories(config):
+            db.upsert_memory(
+                conn,
+                id=memory.id, type=memory.type.value, created_at=memory.created_at,
+                event_date=memory.event_date, importance=memory.importance,
+                confidence=memory.confidence, source=memory.source, status=memory.status.value,
+                title=memory.title, content=memory.content, raw_log_id=memory.raw_log_id,
+                file_path=memory.file_path, topics_json=json.dumps(memory.topics, ensure_ascii=False),
+            )
+            counts["memories"] += 1
+
+        conn.commit()
+
+    return counts

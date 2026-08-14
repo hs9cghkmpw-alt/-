@@ -1,0 +1,7 @@
+# Brain Twin 2.0 (Phase 1) - Python dependencies
+# 依存は最小限にしている(指示書24章: Docker不要、シンプル構成)。
+
+PyYAML>=6.0
+
+# テスト
+pytest>=8.0
