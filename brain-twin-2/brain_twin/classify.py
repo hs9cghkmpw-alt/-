@@ -12,6 +12,7 @@ confidenceは常に1.0(=本人の原文をそのまま保持しているだけ)�
 """
 from __future__ import annotations
 
+from brain_twin.entity_extract import extract_entities
 from brain_twin.models import ClassificationResult, MemoryType
 
 _MIN_MEMORY_LENGTH = 12  # これ未満は「雑談」としてDaily Logのみに残す(粗い閾値)
@@ -49,6 +50,7 @@ def _make_title(text: str) -> str:
 def classify(text: str) -> ClassificationResult:
     stripped = text.strip()
     topics = _extract_topics(stripped)
+    entities = extract_entities(stripped)
     title = _make_title(stripped)
 
     importance = 3 if any(k in stripped for k in _HIGH_IMPORTANCE_KEYWORDS) else 2
@@ -56,30 +58,30 @@ def classify(text: str) -> ClassificationResult:
     if any(k in stripped for k in _DECISION_KEYWORDS):
         return ClassificationResult(
             is_memory_worthy=True, type=MemoryType.DECISION, importance=max(importance, 3),
-            confidence=1.0, topics=topics, entities=[], title=title,
+            confidence=1.0, topics=topics, entities=entities, title=title,
         )
 
     if any(k in stripped for k in _GOAL_KEYWORDS):
         return ClassificationResult(
             is_memory_worthy=True, type=MemoryType.GOAL, importance=max(importance, 3),
-            confidence=1.0, topics=topics, entities=[], title=title,
+            confidence=1.0, topics=topics, entities=entities, title=title,
         )
 
     if any(k in stripped for k in _PREFERENCE_KEYWORDS):
         return ClassificationResult(
             is_memory_worthy=True, type=MemoryType.PREFERENCE, importance=importance,
-            confidence=1.0, topics=topics, entities=[], title=title,
+            confidence=1.0, topics=topics, entities=entities, title=title,
         )
 
     if len(stripped) >= _MIN_MEMORY_LENGTH:
         mem_type = MemoryType.EXPERIENCE if any(k in stripped for k in _PAST_TENSE_MARKERS) else MemoryType.THOUGHT
         return ClassificationResult(
             is_memory_worthy=True, type=mem_type, importance=importance,
-            confidence=1.0, topics=topics, entities=[], title=title,
+            confidence=1.0, topics=topics, entities=entities, title=title,
         )
 
     # 短い/雑談らしい入力はLong-term Memoryへ昇格させない(Daily Logにはそのまま残る)。
     return ClassificationResult(
         is_memory_worthy=False, type=MemoryType.THOUGHT, importance=1, confidence=1.0,
-        topics=topics, entities=[], title=title,
+        topics=topics, entities=entities, title=title,
     )

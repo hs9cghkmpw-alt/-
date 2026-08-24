@@ -128,3 +128,123 @@ def test_ensure_vault_is_idempotent(config):
     vault.ensure_vault(config)  # 2回目もエラーにならない
     assert config.memory_dir.exists()
     assert (config.system_dir / "README.md").exists()
+
+
+# ---- Phase 2: Entity Extraction / Link generation ----
+
+
+def test_process_extracts_entities_into_memory_frontmatter(config):
+    pipeline.add_capture(config, "ナイキの新しいランニングシューズを買った、走るのが楽しみ")
+    pipeline.process_all(config)
+
+    memories = memory_io.list_all_memories(config)
+    assert len(memories) == 1
+    assert "ナイキ" in memories[0].entities
+
+
+def test_process_links_memories_sharing_an_entity(config):
+    pipeline.add_capture(config, "ナイキの新しいランニングシューズを買った、走るのが楽しみ")
+    pipeline.process_all(config)
+    pipeline.add_capture(config, "今日はナイキの本社について調べていた、面白い会社だと思う")
+    summary = pipeline.process_all(config)
+
+    assert summary.links_created >= 1
+
+    memories = {m.title: m for m in memory_io.list_all_memories(config)}
+    second = [m for m in memories.values() if "本社" in m.content][0]
+    first = [m for m in memories.values() if "ランニングシューズ" in m.content][0]
+
+    assert f"[[{first.id}]]" in second.links
+    relation_types = {d["relation_type"] for d in second.link_details if d["target"] == first.id}
+    assert "same_entity" in relation_types
+
+
+def test_process_does_not_link_unrelated_memories(config):
+    pipeline.add_capture(config, "病院いったら診断書お願いしなきゃ")
+    pipeline.process_all(config)
+
+    with db.connect(config) as conn:
+        signals_before = db.list_active_memory_signals(conn)
+    assert len(signals_before) == 1
+
+    # 2件目はトピック・エンティティともに無関係。時間差も指示書上「近い」とは扱われない
+    # (linking._TEMPORAL_CLOSE_WINDOW=30分)ため、リンクは作られないはず。テスト実行は
+    # 一瞬で終わるため、窓を意図的に負の値にして「常に窓の外」を再現する。
+    from datetime import timedelta
+
+    from brain_twin import linking
+
+    original_window = linking._TEMPORAL_CLOSE_WINDOW
+    linking._TEMPORAL_CLOSE_WINDOW = timedelta(seconds=-1)
+    try:
+        pipeline.add_capture(config, "クラルティに応募することにした")
+        summary = pipeline.process_all(config)
+    finally:
+        linking._TEMPORAL_CLOSE_WINDOW = original_window
+
+    assert summary.links_created == 0
+
+
+def test_entities_persisted_in_sqlite_after_process(config):
+    pipeline.add_capture(config, "ナイキの新しいランニングシューズを買った、走るのが楽しみ")
+    pipeline.process_all(config)
+
+    memories = memory_io.list_all_memories(config)
+    memory_id = memories[0].id
+
+    with db.connect(config) as conn:
+        entities = db.entities_for_memories(conn, [memory_id])[memory_id]
+    assert "ナイキ" in entities
+
+
+def test_reindex_reproduces_links_and_entities_from_markdown(config):
+    pipeline.add_capture(config, "ナイキの新しいランニングシューズを買った、走るのが楽しみ")
+    pipeline.process_all(config)
+    pipeline.add_capture(config, "今日はナイキの本社について調べていた、面白い会社だと思う")
+    pipeline.process_all(config)
+
+    with db.connect(config) as conn:
+        links_before = sorted(
+            conn.execute(
+                "SELECT source_memory_id, target_memory_id, relation_type, reason FROM links ORDER BY 1, 2, 3"
+            ).fetchall()
+        )
+        entities_before = sorted(
+            conn.execute(
+                """
+                SELECT me.memory_id, e.name FROM memory_entities me
+                JOIN entities e ON e.id = me.entity_id ORDER BY 1, 2
+                """
+            ).fetchall()
+        )
+
+    config.db_path.unlink()
+    counts = pipeline.reindex(config)
+    assert counts["links"] == len(links_before)
+
+    with db.connect(config) as conn:
+        links_after = sorted(
+            conn.execute(
+                "SELECT source_memory_id, target_memory_id, relation_type, reason FROM links ORDER BY 1, 2, 3"
+            ).fetchall()
+        )
+        entities_after = sorted(
+            conn.execute(
+                """
+                SELECT me.memory_id, e.name FROM memory_entities me
+                JOIN entities e ON e.id = me.entity_id ORDER BY 1, 2
+                """
+            ).fetchall()
+        )
+
+    assert links_after == links_before
+    assert entities_after == entities_before
+
+
+def test_search_result_includes_entities(config):
+    pipeline.add_capture(config, "ナイキの新しいランニングシューズを買った、走るのが楽しみ")
+    pipeline.process_all(config)
+
+    results = search.search_with_config(config, "ランニングシューズ")
+    assert len(results) == 1
+    assert "ナイキ" in results[0].entities

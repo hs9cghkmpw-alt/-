@@ -32,6 +32,7 @@ def _cmd_process(args: argparse.Namespace) -> int:
     print(f"Daily Logへ保存: {summary.daily_log_saved}件")
     print(f"Long-term Memory候補: {summary.memories_created}件")
     print(f"雑談として保持: {summary.kept_as_chat}件")
+    print(f"生成されたLink: {summary.links_created}件")
     if summary.memory_ids and args.verbose:
         print("生成されたMemory:")
         for mid in summary.memory_ids:
@@ -49,7 +50,8 @@ def _cmd_search(args: argparse.Namespace) -> int:
 
     for r in results:
         topics = ",".join(r.topics) if r.topics else "-"
-        print(f"[{r.event_date}] ({r.type} / importance={r.importance} / confidence={r.confidence:.2f} / topics={topics})")
+        entities = ",".join(r.entities) if r.entities else "-"
+        print(f"[{r.event_date}] ({r.type} / importance={r.importance} / confidence={r.confidence:.2f} / topics={topics} / entities={entities})")
         print(f"  {r.title}")
         if args.verbose:
             snippet = r.content if len(r.content) <= 120 else r.content[:120] + "…"
@@ -66,6 +68,7 @@ def _cmd_reindex(args: argparse.Namespace) -> int:
     print(f"  raw_logs: {counts['raw_logs']}件")
     print(f"  daily_logs: {counts['daily_logs']}件")
     print(f"  memories: {counts['memories']}件")
+    print(f"  links: {counts['links']}件")
     return 0
 
 

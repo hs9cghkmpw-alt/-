@@ -73,7 +73,10 @@ class Memory:
     raw_log_id: str | None
     topics: list[str] = field(default_factory=list)
     entities: list[str] = field(default_factory=list)
-    links: list[str] = field(default_factory=list)
+    links: list[str] = field(default_factory=list)  # Obsidian向け "[[mem_id]]" 形式(指示書7章の例に合わせる)
+    # links と同じ内容を relation_type/reason 付きで保持する(指示書25章: SQLiteをMarkdownから
+    # 完全に再構築するには、リンクの種類・理由もMarkdown側に残っている必要があるため)。
+    link_details: list[dict] = field(default_factory=list)
     file_path: str = ""  # vaultルートからの相対パス。書き込み時に確定する。
 
 

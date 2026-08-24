@@ -59,6 +59,7 @@ def write_memory(config: Config, memory: Memory) -> Memory:
         "topics": memory.topics,
         "entities": memory.entities,
         "links": memory.links,
+        "link_details": memory.link_details,
         "raw_log_id": memory.raw_log_id,
     }
     body = (
@@ -108,6 +109,7 @@ def read_memory(path: Path, config: Config) -> Memory:
         topics=list(front.get("topics") or []),
         entities=list(front.get("entities") or []),
         links=list(front.get("links") or []),
+        link_details=list(front.get("link_details") or []),
         file_path=vault.relative_to_vault(path, config),
     )
 

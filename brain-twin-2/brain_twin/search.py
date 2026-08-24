@@ -32,6 +32,7 @@ class ScoredResult:
     importance: int
     confidence: float
     topics: list[str]
+    entities: list[str]
     score: float
 
 
@@ -63,7 +64,7 @@ def search(conn: sqlite3.Connection, query: str, *, limit: int = 20) -> list[Sco
             ScoredResult(
                 memory_id=hit.memory_id, title=hit.title, content=hit.content, type=hit.type,
                 event_date=hit.event_date, importance=hit.importance, confidence=hit.confidence,
-                topics=hit.topics, score=score,
+                topics=hit.topics, entities=hit.entities, score=score,
             )
         )
 

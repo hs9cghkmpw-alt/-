@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS links (
     source_memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     target_memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     relation_type      TEXT NOT NULL,
+    reason             TEXT NOT NULL DEFAULT '',
     created_at         TEXT NOT NULL,
     UNIQUE (source_memory_id, target_memory_id, relation_type)
 );
@@ -112,11 +113,23 @@ class SearchHit:
     confidence: float
     status: str
     topics: list[str]
+    entities: list[str]
     rank: float
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    """`CREATE TABLE IF NOT EXISTS` は既存テーブルに新しい列を追加してくれないため、
+    Phase 1時点で作られた古いindex(links.reason列が無い状態)を持つ環境でも
+    次回実行時に自動で追従できるようにする(指示書34章: データ消失禁止。
+    再構築(reindex)を使わなくても壊れないようにする最小限の自己修復)。"""
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 def _apply_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    _ensure_column(conn, "links", "reason", "TEXT NOT NULL DEFAULT ''")
     conn.commit()
 
 
@@ -207,6 +220,114 @@ def upsert_memory(
     )
 
 
+@dataclass(frozen=True)
+class MemorySignal:
+    """Link候補選定に必要な最小限のメタデータ(本文は含まない、軽量)。"""
+
+    id: str
+    topics: list[str]
+    created_at: str  # ISO8601
+    entities: list[str]
+
+
+def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
+    conn.execute("INSERT INTO entities (name) VALUES (?) ON CONFLICT(name) DO NOTHING", (name,))
+    row = conn.execute("SELECT id FROM entities WHERE name = ?", (name,)).fetchone()
+    return row[0]
+
+
+def set_memory_entities(conn: sqlite3.Connection, memory_id: str, entity_names: list[str]) -> None:
+    """このMemoryのentity集合を丸ごと置き換える(reindexで何度実行しても同じ結果になるよう冪等)。"""
+    conn.execute("DELETE FROM memory_entities WHERE memory_id = ?", (memory_id,))
+    for name in entity_names:
+        entity_id = get_or_create_entity(conn, name)
+        conn.execute(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+            (memory_id, entity_id),
+        )
+
+
+def entities_for_memories(conn: sqlite3.Connection, memory_ids: list[str]) -> dict[str, list[str]]:
+    """複数memory_idのentitiesを1クエリでまとめて取得する(N+1を避ける)。"""
+    if not memory_ids:
+        return {}
+    placeholders = ",".join("?" for _ in memory_ids)
+    rows = conn.execute(
+        f"""
+        SELECT me.memory_id, e.name
+        FROM memory_entities me
+        JOIN entities e ON e.id = me.entity_id
+        WHERE me.memory_id IN ({placeholders})
+        """,
+        memory_ids,
+    ).fetchall()
+    result: dict[str, list[str]] = {mid: [] for mid in memory_ids}
+    for memory_id, name in rows:
+        result[memory_id].append(name)
+    return result
+
+
+def list_active_memory_signals(conn: sqlite3.Connection, *, exclude_id: str | None = None, limit: int = 500) -> list[MemorySignal]:
+    """Link候補となる、既存の有効なMemoryの軽量メタデータを新しい順に取得する。"""
+    import json as _json
+
+    if exclude_id is not None:
+        rows = conn.execute(
+            """
+            SELECT id, topics_json, created_at FROM memories
+            WHERE status = 'active' AND id != ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (exclude_id, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id, topics_json, created_at FROM memories
+            WHERE status = 'active'
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    ids = [r[0] for r in rows]
+    entities_by_id = entities_for_memories(conn, ids)
+
+    return [
+        MemorySignal(id=r[0], topics=_json.loads(r[1] or "[]"), created_at=r[2], entities=entities_by_id.get(r[0], []))
+        for r in rows
+    ]
+
+
+def upsert_link(conn: sqlite3.Connection, *, source_memory_id: str, target_memory_id: str, relation_type: str, reason: str, created_at: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO links (source_memory_id, target_memory_id, relation_type, reason, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(source_memory_id, target_memory_id, relation_type) DO NOTHING
+        """,
+        (source_memory_id, target_memory_id, relation_type, reason, created_at),
+    )
+
+
+@dataclass(frozen=True)
+class LinkRow:
+    target_memory_id: str
+    relation_type: str
+    reason: str
+
+
+def links_for_memory(conn: sqlite3.Connection, memory_id: str) -> list[LinkRow]:
+    """source側から見たリンクのみを返す(このMemoryが起点になっているもの)。"""
+    rows = conn.execute(
+        "SELECT target_memory_id, relation_type, reason FROM links WHERE source_memory_id = ?",
+        (memory_id,),
+    ).fetchall()
+    return [LinkRow(target_memory_id=r[0], relation_type=r[1], reason=r[2]) for r in rows]
+
+
 def search(conn: sqlite3.Connection, query: str, *, limit: int = 20) -> list[SearchHit]:
     import json as _json
 
@@ -224,11 +345,13 @@ def search(conn: sqlite3.Connection, query: str, *, limit: int = 20) -> list[Sea
         (phrase, limit),
     ).fetchall()
 
+    entities_by_id = entities_for_memories(conn, [r[0] for r in rows])
+
     return [
         SearchHit(
             memory_id=r[0], title=r[1], content=r[2], type=r[3], event_date=r[4],
             importance=r[5], confidence=r[6], status=r[7], topics=_json.loads(r[8] or "[]"),
-            rank=r[9],
+            entities=entities_by_id.get(r[0], []), rank=r[9],
         )
         for r in rows
     ]
