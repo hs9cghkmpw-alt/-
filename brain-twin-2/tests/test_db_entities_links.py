@@ -201,3 +201,36 @@ def test_list_memory_signals_by_ids_returns_topics_and_entities(config):
 def test_list_memory_signals_by_ids_empty_input_returns_empty(config):
     with db.connect(config) as conn:
         assert db.list_memory_signals_by_ids(conn, []) == []
+
+
+# ---- レビュー対応(2回目): 「直近500件」の名残だった暗黙の200件上限を撤廃 ----
+#
+# 「古いMemoryが1件だけ」という設定では、そのMemoryが偶然200件のウィンドウ内に
+# 収まってしまい上限撤廃の効果を検証できない。一致する行を201件以上作った上で、
+# 最も古い1件(=打ち切りがあれば真っ先に落ちる行)がなお候補に含まれることを見る。
+
+
+def _old_created_at(i: int) -> str:
+    return f"2001-01-01T{i // 3600:02d}:{i // 60 % 60:02d}:{i % 60:02d}+00:00"
+
+
+def test_find_candidates_by_topics_finds_oldest_among_201_matches(config):
+    with db.connect(config) as conn:
+        for i in range(201):
+            _insert_bare_memory(conn, f"mem_{i:03d}", created_at=_old_created_at(i), topics_json='["work"]')
+
+        found = db.find_candidates_by_topics(conn, ["work"])
+        assert len(found) == 201
+        assert "mem_000" in found  # 最も古い行(created_atが最小)
+
+
+def test_find_candidates_by_entities_finds_oldest_among_201_matches(config):
+    with db.connect(config) as conn:
+        for i in range(201):
+            memory_id = f"mem_{i:03d}"
+            _insert_bare_memory(conn, memory_id, created_at=_old_created_at(i))
+            db.set_memory_entities(conn, memory_id, [_entity("ナイキ")])
+
+        found = db.find_candidates_by_entities(conn, ["ナイキ"])
+        assert len(found) == 201
+        assert "mem_000" in found  # 最も古い行

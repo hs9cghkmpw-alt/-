@@ -1,8 +1,11 @@
+import contextlib
+import dataclasses
 from datetime import datetime
 
 import pytest
 
-from brain_twin import db, memory_io, pipeline, raw_log_io, search, vault
+from brain_twin import classify, db, memory_io, pipeline, raw_log_io, search, vault
+from brain_twin.models import MemoryType
 
 
 def test_add_writes_raw_log_and_db_row(config):
@@ -379,3 +382,174 @@ def test_process_recovers_from_crash_before_raw_log_marked_processed(config, mon
 
     raw_logs = raw_log_io.list_raw_logs(config)
     assert raw_logs[0].processed_at is not None
+
+
+def test_process_recovers_from_crash_with_classification_change_no_duplicate_across_types(config, monkeypatch):
+    """レビュー対応(2回目)最優先事項: 1回目の分類でTHOUGHTと判定されMemory Markdownが
+    書き込まれた直後(SQLiteへのdb.upsert_memory反映前)にクラッシュしたケースを再現する。
+    再実行時に分類ロジック自体が変わっていて(例: 同じ入力が今度はDECISIONと判定される)
+    ても、find_existingがVault全体(type別フォルダすべて)から既存ファイルを見つけて
+    再利用するため、新しいtype(Decisions)のフォルダに重複したMemoryを作らないことを
+    確認する。元のMarkdown(THOUGHTとして書かれたもの)が正として再利用されること、
+    Vault全体でMemoryが1件だけであることの両方を見る。"""
+    pipeline.add_capture(config, "十分に長い、意図的にクラッシュさせるテスト用の入力文です")
+
+    real_classify = classify.classify
+
+    def thought_classification(text):
+        return dataclasses.replace(real_classify(text), type=MemoryType.THOUGHT, is_memory_worthy=True)
+
+    monkeypatch.setattr(classify, "classify", thought_classification)
+
+    real_upsert_memory = db.upsert_memory
+    call_state = {"count": 0}
+
+    def flaky_upsert_memory(conn, **kwargs):
+        call_state["count"] += 1
+        if call_state["count"] == 1:
+            raise RuntimeError("simulated crash right after the memory markdown file was written")
+        return real_upsert_memory(conn, **kwargs)
+
+    monkeypatch.setattr(db, "upsert_memory", flaky_upsert_memory)
+
+    with pytest.raises(RuntimeError):
+        pipeline.process_all(config)
+
+    memories_after_crash = memory_io.list_all_memories(config)
+    assert len(memories_after_crash) == 1
+    assert memories_after_crash[0].type == MemoryType.THOUGHT
+    original_id = memories_after_crash[0].id
+
+    # 「再実行時には分類ロジック自体が変わっていた」を再現する: 同じ入力が今度はDECISIONに
+    # 分類される。
+    def decision_classification(text):
+        return dataclasses.replace(real_classify(text), type=MemoryType.DECISION, is_memory_worthy=True)
+
+    monkeypatch.setattr(classify, "classify", decision_classification)
+
+    summary = pipeline.process_all(config)
+
+    memories_after_retry = memory_io.list_all_memories(config)
+    assert len(memories_after_retry) == 1  # Vault全体で重複が作られていない
+    assert memories_after_retry[0].id == original_id
+    assert memories_after_retry[0].type == MemoryType.THOUGHT  # 元のMarkdownが正として再利用される
+    assert summary.memories_created == 1
+
+    decision_folder = config.vault_dir / "20_Memory" / "Decisions"
+    assert list(decision_folder.glob("mem_*.md")) == []  # 新typeのフォルダには複製が無い
+
+    with db.connect(config) as conn:
+        db_memory_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+    assert db_memory_count == 1
+
+
+# ---- レビュー対応(2回目・最優先): processed_atはMarkdownに書けたがSQLite commitが
+# ---- 一度も起きなかったraw_logの自動reconcile ----
+
+
+def test_process_all_auto_reconciles_raw_log_processed_in_markdown_but_never_committed_to_sqlite(config, monkeypatch):
+    """再現するクラッシュ窓: Raw Logのprocessed_atはMarkdownへ正常に書き込まれた
+    (raw_log_io.mark_processed成功)のに、その同じprocess_all()呼び出しの
+    conn.commit()が一度も実行されない(直前でクラッシュした)ケース。
+
+    Markdownは「処理済み」と言っているため、以後 list_raw_logs(unprocessed_only=True)
+    はこのraw_logを二度と拾わない。それでもSQLiteには何も反映されていないままなので、
+    放置すると reindex を手動実行するまで不整合が残り続けてしまう。次回の
+    process_all() 呼び出しの冒頭で自動的にこれを検出・修復できることを、
+    以下の手順で確認する。
+
+    1. raw logを追加する
+    2. processする(このテストでは意図的にクラッシュさせる)
+    3. Memory Markdownが書き込まれていることを確認する
+    4. Raw Logのprocessed_atがMarkdownへ書き込まれていることを確認する
+    5. SQLiteへのconn.commit()の直前で例外が発生する(monkeypatchで再現)
+    6. processが例外で終了する
+    7. 「再起動後の次回実行」を模して、もう一度process_allを呼ぶ
+    8. 通常運用の一部として自動的に回復する(reconcileが自動実行される)
+    9. Memoryがちょうど1件だけ存在する
+    10. Raw Logがprocessed済みとして扱われている
+    11. SQLite側にMemory/Entity/Linkの行が正しく存在する
+    12. MarkdownとSQLiteの内容が一致する
+
+    本番コードに例外注入用のフックは加えない。sqlite3.Connection自体はイミュータブルな
+    拡張型でメソッドをmonkeypatchできないため、db.connect()が返す接続をそのまま使う
+    代わりに、commit()だけを差し替えて残りは実際の接続へ委譲する薄いプロキシを
+    monkeypatch.setattr(db, "connect", ...)で被せる。raw_log_io.mark_processedが
+    実際に成功した後の最初のcommit()呼び出しだけを狙って例外を送出する
+    (以降は本来のcommitへ委譲する)ことで、「processed_atは書けたがcommitはされて
+    いない」という狙った状態そのものを再現する。
+    """
+    pipeline.add_capture(config, "ナイキの新しいランニングシューズを買った、走るのが楽しみ")
+
+    mark_processed_done = {"value": False}
+    real_mark_processed = raw_log_io.mark_processed
+
+    def spy_mark_processed(config_arg, raw_log_arg, **kwargs):
+        real_mark_processed(config_arg, raw_log_arg, **kwargs)  # 3・4: Markdownへの書き込み自体は成功させる
+        mark_processed_done["value"] = True
+
+    monkeypatch.setattr(raw_log_io, "mark_processed", spy_mark_processed)
+
+    crashed = {"value": False}
+
+    class _FlakyCommitConn:
+        def __init__(self, real_conn):
+            self._real_conn = real_conn
+
+        def commit(self):
+            if mark_processed_done["value"] and not crashed["value"]:
+                crashed["value"] = True
+                raise RuntimeError("simulated crash right before the SQLite commit for this process_all() run")
+            return self._real_conn.commit()
+
+        def __getattr__(self, name):
+            return getattr(self._real_conn, name)
+
+    real_connect = db.connect
+
+    @contextlib.contextmanager
+    def flaky_connect(config_arg):
+        with real_connect(config_arg) as real_conn:
+            yield _FlakyCommitConn(real_conn)
+
+    monkeypatch.setattr(db, "connect", flaky_connect)
+
+    with pytest.raises(RuntimeError):  # 5・6
+        pipeline.process_all(config)
+
+    # クラッシュ直後の状態: Markdown上は処理済みなのに、SQLiteには一切反映されていない。
+    memories_after_crash = memory_io.list_all_memories(config)
+    assert len(memories_after_crash) == 1  # 3
+    raw_logs_after_crash = raw_log_io.list_raw_logs(config)
+    assert raw_logs_after_crash[0].processed_at is not None  # 4
+    with db.connect(config) as conn:
+        assert db.get_raw_log_processed_at(conn, raw_logs_after_crash[0].id) is None  # 反映されていない
+        assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 0
+
+    # 7: 「再起動後」を模して、もう一度process_allを呼ぶ(reconcileがこの中で自動的に走る)。
+    summary = pipeline.process_all(config)  # 8
+
+    assert raw_logs_after_crash[0].id in summary.reconciled_raw_log_ids
+
+    memories_after_recovery = memory_io.list_all_memories(config)
+    assert len(memories_after_recovery) == 1  # 9: 重複生成されていない
+    assert memories_after_recovery[0].id == memories_after_crash[0].id
+
+    raw_logs_after_recovery = raw_log_io.list_raw_logs(config)
+    assert raw_logs_after_recovery[0].processed_at is not None  # 10
+
+    memory = memories_after_recovery[0]
+    with db.connect(config) as conn:  # 11
+        assert db.get_raw_log_processed_at(conn, raw_logs_after_recovery[0].id) == raw_logs_after_recovery[0].processed_at
+        db_memory = conn.execute(
+            "SELECT id, content, raw_log_id FROM memories WHERE id = ?", (memory.id,)
+        ).fetchone()
+        assert db_memory is not None
+        assert db_memory[1] == memory.content
+        db_entity_names = {
+            row[0] for row in conn.execute(
+                "SELECT e.name FROM memory_entities me JOIN entities e ON e.id = me.entity_id "
+                "WHERE me.memory_id = ?", (memory.id,)
+            ).fetchall()
+        }
+    assert db_entity_names == set(memory.entities)  # 12: MarkdownとSQLiteの内容が一致する

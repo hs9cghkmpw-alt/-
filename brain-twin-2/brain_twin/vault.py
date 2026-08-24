@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from brain_twin.config import Config
@@ -67,7 +68,27 @@ def write_text_atomic(path: Path, content: str) -> None:
     Memory Markdownは「再実行時に既存ファイルを検出して二重生成を防ぐ」
     (pipeline.py の find_existing 連携)ための拠り所になるため、この保証が重要になる
     (途中で壊れた不完全なファイルがあると、それを正として読み込もうとして
-    かえって壊れてしまうため)。"""
-    tmp_path = path.with_name(path.name + ".tmp")
-    tmp_path.write_text(content, encoding="utf-8")
-    tmp_path.replace(path)
+    かえって壊れてしまうため)。Raw Log / Daily Log の書き込みも同じ理由でこの関数を
+    経由する(レビュー対応: 以前はMemoryだけがatomic writeで、原本であるRaw Logの
+    方が保護されていなかった)。
+
+    Windowsでの安全性について:
+    - 一時ファイルは対象ファイルと同じディレクトリに作る(`path.with_name`)ため、
+      同一ファイルシステム上に置かれることが保証される。異なるボリューム間の
+      renameはPOSIX/Windowsいずれでも原子的でないため、これは必須の前提。
+    - `Path.replace()` は内部で `os.replace()` を使う。Windowsでも
+      `ReplaceFile`/`MoveFileEx(MOVEFILE_REPLACE_EXISTING)` 相当の実装になっており
+      (POSIXの `rename()` と同様に)既存ファイルへの上書きを含めて原子的に行える
+      (`os.rename()` 単体とは異なり、Windows上でも上書きが失敗しない)。
+    - 一時ファイル名にプロセスIDを含めることで、同じVaultに対して複数プロセスが
+      同時に書き込んだ場合でも一時ファイル名が衝突しないようにする。仮に書き込み中に
+      例外が起きた場合は一時ファイルを削除してから再送出し、`*.tmp` の残骸が
+      Vault内に残り続けないようにする。
+    """
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp_path.write_text(content, encoding="utf-8")
+        tmp_path.replace(path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise

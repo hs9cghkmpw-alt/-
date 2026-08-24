@@ -1,12 +1,11 @@
 """Raw Log -> Daily Log -> (Memory) の一連の処理(指示書3・20章)。"""
 from __future__ import annotations
 
-import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from brain_twin import classify, db, linking, memory_io, raw_log_io, vault
+from brain_twin import classify, db, linking, memory_io, memory_persistence, raw_log_io, reconcile, vault
 from brain_twin.config import Config
 from brain_twin.models import ExtractedEntity, Memory, RawLog
 
@@ -19,6 +18,7 @@ class ProcessSummary:
     kept_as_chat: int = 0
     links_created: int = 0
     memory_ids: list[str] = field(default_factory=list)
+    reconciled_raw_log_ids: list[str] = field(default_factory=list)
 
 
 def _suggest_links(
@@ -81,35 +81,6 @@ def _apply_link_suggestions(memory: Memory, suggestions: list[linking.LinkSugges
     ]
 
 
-def _persist_memory_row(conn: sqlite3.Connection, memory: Memory) -> None:
-    db.upsert_memory(
-        conn,
-        id=memory.id, type=memory.type.value, created_at=memory.created_at,
-        event_date=memory.event_date, importance=memory.importance,
-        confidence=memory.confidence, source=memory.source, status=memory.status.value,
-        title=memory.title, content=memory.content, raw_log_id=memory.raw_log_id,
-        file_path=memory.file_path, topics_json=json.dumps(memory.topics, ensure_ascii=False),
-    )
-
-
-def _persist_links(conn: sqlite3.Connection, memory_id: str, link_details: list[dict], fallback_created_at: str) -> None:
-    """link_details(Markdownに書かれている内容)をそのままSQLiteへ反映する。
-    新規生成時・reindex時・process再実行時(クラッシュからの復旧)のすべてでこの関数を
-    通すことで、『SQLiteの内容は常にMarkdownの言っていることの写し』という原則を
-    1箇所に集約する。fallback_created_atは、このfix以前に書かれたlink_details
-    (created_atを持たない)を読んだ場合の後方互換用。"""
-    for detail in link_details:
-        target = detail.get("target")
-        if not target:
-            continue
-        db.upsert_link(
-            conn, source_memory_id=memory_id, target_memory_id=target,
-            relation_type=detail.get("relation_type", "related"),
-            reason=detail.get("reason", ""),
-            created_at=detail.get("created_at") or fallback_created_at,
-        )
-
-
 def add_capture(config: Config, text: str, source: str = "cli") -> str:
     """指示書39章: `add` は Raw Log へ保存するだけ(整理はしない)。"""
     vault.ensure_vault(config)
@@ -146,7 +117,7 @@ def _process_one(config: Config, conn: sqlite3.Connection, raw_log: RawLog) -> t
         return None, 0
 
     memory = memory_io.build_memory(raw_log, result)
-    existing = memory_io.find_existing(config, memory.id, memory.type)
+    existing = memory_io.find_existing(config, memory.id)
 
     if existing is not None:
         memory = existing
@@ -155,25 +126,37 @@ def _process_one(config: Config, conn: sqlite3.Connection, raw_log: RawLog) -> t
         _apply_link_suggestions(memory, suggestions, datetime.now().astimezone().isoformat())
         memory = memory_io.write_memory(config, memory)
 
-    _persist_memory_row(conn, memory)
-    db.set_memory_entities(conn, memory.id, memory_io.entity_objects(memory))
-    _persist_links(conn, memory.id, memory.link_details, fallback_created_at=memory.created_at)
+    memory_persistence.persist_memory(conn, memory)
+    memory_persistence.persist_links(conn, memory.id, memory.link_details, fallback_created_at=memory.created_at)
 
     return memory, len(memory.link_details)
 
 
 def process_all(config: Config) -> ProcessSummary:
     """未処理のRaw LogをDaily Logへ保存し、ダミー分類器でMemory候補を判定して
-    Long-term Memoryを生成する(指示書3・20章)。"""
+    Long-term Memoryを生成する(指示書3・20章)。
+
+    本体の処理に入る前に、必ず reconcile.reconcile_processed_raw_logs() を実行する
+    (レビュー対応・最優先項目)。Markdown上はprocessed_at済みなのにSQLite側が
+    未反映のまま残っているraw_logがあれば、ここで検出して自己修復する。
+    「未処理のraw_logが0件だから何もしない」という早期returnをこのreconcileより
+    前に置いてしまうと、そもそもreconcileが実行されなくなってしまう
+    (不整合があるraw_log自体はMarkdown上「処理済み」なので unprocessed_only=True
+    には含まれず、"何もすることがない"と誤認してしまうため)。そのためreconcileは
+    DB接続を開いた直後、unprocessedの判定より先に行う。"""
     vault.ensure_vault(config)
     summary = ProcessSummary()
 
-    unprocessed = raw_log_io.list_raw_logs(config, unprocessed_only=True)
-    summary.total_inputs = len(unprocessed)
-    if not unprocessed:
-        return summary
-
     with db.connect(config) as conn:
+        reconcile_result = reconcile.reconcile_processed_raw_logs(config, conn)
+        conn.commit()
+        summary.reconciled_raw_log_ids = reconcile_result.repaired_raw_log_ids
+
+        unprocessed = raw_log_io.list_raw_logs(config, unprocessed_only=True)
+        summary.total_inputs = len(unprocessed)
+        if not unprocessed:
+            return summary
+
         touched_dates: set[str] = set()
 
         for raw_log in unprocessed:
@@ -237,14 +220,13 @@ def reindex(config: Config) -> dict[str, int]:
 
         memories = memory_io.list_all_memories(config)
         for memory in memories:
-            _persist_memory_row(conn, memory)
-            db.set_memory_entities(conn, memory.id, memory_io.entity_objects(memory))
+            memory_persistence.persist_memory(conn, memory)
             counts["memories"] += 1
 
         # linksは全Memoryを挿入し終えてから2周目でまとめて登録する。target側のMemoryが
         # 先に存在している必要がある(外部キー制約)ため、1周目と同じループでは行えない。
         for memory in memories:
-            _persist_links(conn, memory.id, memory.link_details, fallback_created_at=memory.created_at)
+            memory_persistence.persist_links(conn, memory.id, memory.link_details, fallback_created_at=memory.created_at)
             counts["links"] += len(memory.link_details)
 
         conn.commit()

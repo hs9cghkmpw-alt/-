@@ -77,10 +77,12 @@ brain-twin-2/
 │  ├ raw_log_io.py        # Layer 1(Raw Log) / Layer 2(Daily Log)
 │  ├ memory_io.py         # Layer 3(Long-term Memory)
 │  ├ db.py                # SQLite index (FTS5 trigram + entities/links)
+│  ├ memory_persistence.py # MemoryをSQLiteへ反映する共通処理(pipeline/reconcileの両方が使う)
+│  ├ reconcile.py         # processed_atの反映漏れ(commit前クラッシュ)を検出・自己修復
 │  ├ pipeline.py          # add / process / reindex の実処理
 │  ├ search.py            # 簡易Hybrid Retrieval
 │  └ cli.py               # argparseによるコマンド定義
-├ tests/                  # pytest (69 tests)
+├ tests/                  # pytest (89 tests)
 ├ scripts/setup.ps1
 ├ vault/                  # 実際のVault(Git管理外、実行時に自動生成)
 └ data/                   # SQLite index(Git管理外)
@@ -226,9 +228,134 @@ Phase 2実装(コミット `6342152`)に対するレビューで5件の問題が
    破損ファイルに対しては機能しないため、その前提を守るために追加した
    (この判断もこの節で明記しておく)。
 
+## レビュー修正(2回目, 2026-08-24)
+
+1回目のレビュー修正(コミット `4e5f3fd`)に対する2回目のレビューで、さらに5件の問題が
+指摘され、以下のように対応した。既存の設計・アーキテクチャ(責務分離)はここでも維持し、
+新たに追加したのは「MemoryをSQLiteへ反映する処理」を独立させた `memory_persistence.py`
+と、reconcile専用の `reconcile.py` の2モジュールのみ。
+
+1. **候補探索の「200件制限」の解消**: 1回目の修正で「直近500件」の全件Python走査は
+   撤廃したが、`find_candidates_by_topics` / `find_candidates_by_entities` /
+   `find_candidates_by_time_range` の各SQLクエリには `ORDER BY created_at DESC LIMIT 200`
+   が残っており、"一致する集合の中で新しい200件だけ"という形で同じ問題(古いMemoryが
+   候補から漏れる)が再発していた。この`LIMIT`を撤廃し、一致するIDを全件返すように
+   した。件数が増えたときの安全性は、打ち切りではなく**バッチ処理**で確保する:
+   `entities_for_memories` / `list_memory_signals_by_ids` は候補IDが多い場合でも
+   SQLiteの `IN (?, ?, ...)` プレースホルダ上限(`SQLITE_MAX_VARIABLE_NUMBER`)に
+   引っかからないよう、500件単位(`db._chunked`)に分割して問い合わせる。スコアリング・
+   上位N件への絞り込みは引き続き `linking.py` の責務のまま。201件が同じtopic/entityを
+   共有する状況で最も古い1件が候補に含まれることを、`test_db_entities_links.py` に
+   追加したテストで確認している(「古いMemoryが1件だけ」という設定では打ち切りの
+   有無を区別できないため、201件という具体的な件数で検証している)。
+2. **Raw Log / Daily Logの書き込みが非atomicだった問題**: `raw_log_io.write_raw_log` /
+   `mark_processed` / `append_to_daily_log` を、Memory Markdownと同じ
+   `vault.write_text_atomic()` 経由に変更した。Raw LogはVault内で最も失ってはいけない
+   原本(整理される前の入力そのもの)であり、Memoryと同等以上に書き込み途中のクラッシュに
+   強くあるべき、という指摘に基づく。`write_text_atomic` 自体もこの機会に補強した:
+   一時ファイル名にPIDを含めて複数プロセスからの同時書き込みでも衝突しないようにし、
+   書き込み中に例外が起きた場合は一時ファイルを削除してから再送出するようにした
+   (`*.tmp` の残骸がVaultに残り続けない)。Windowsでの安全性(同一ファイルシステム内の
+   `Path.replace()` が上書きを含めて原子的であること)は `vault.write_text_atomic` の
+   docstringに根拠を記録した。`test_vault.py` を新設して検証している。
+3. **processed_atがMarkdownには書けたがSQLite commitされない窓(最優先)**:
+   `process_all()` は1件のraw_logについて (a) Memory Markdown書き込み → (b) Raw Log
+   processed_at書き込み(Markdown) → (c) SQLiteへの反映+`conn.commit()` の順で処理する。
+   (b)の直後・(c)のcommit前でクラッシュすると、Markdown上は「処理済み」なのにSQLiteには
+   何も反映されない状態が残る。この状態のraw_logはMarkdownが「処理済み」と言っている以上
+   `unprocessed_only=True` では二度と拾われず、`reindex` を手動実行するまで不整合が
+   残り続けてしまう。これを解消するため `reconcile.py`(新設)に
+   `reconcile_processed_raw_logs()` を実装した: 全raw_logのうちMarkdown上processed_at
+   済みなのにSQLite側`raw_logs`が未反映(行が無い、またはprocessed_at NULL)のものを検出し、
+   分類を再実行(`classify.classify`は純粋関数なので副作用なく再実行できる)して
+   `memory_io.find_existing()`(後述の修正で全Vault検索になったもの)で既存Memoryを
+   見つけ、`memory_persistence.persist_memory/persist_links` でSQLiteへ反映し直す。
+   Memory Markdownが万一(手動編集等で)見つからない異常な場合は `ReconcileError` を
+   送出し、黙って何もしない/でっち上げることはしない。この関数は `process_all()` の
+   冒頭、DB接続を開いた直後・「未処理raw logが0件だから何もしない」という早期return
+   より前に必ず呼ぶよう `process_all()` を再構成した(不整合のあるraw_log自体は
+   Markdown上「処理済み」なので、そのままだと"unprocessed"が0件に見えてreconcile自体が
+   スキップされてしまうため)。`pipeline.py`から独立したモジュールにしたのは、
+   「1件のraw_logをSQLiteへ反映する」処理自体は`pipeline.py`の通常経路(`_process_one`)
+   と`reconcile.py`の両方が必要とするため、`memory_persistence.py`へ切り出して
+   両方から利用する形にし、`pipeline.py → reconcile.py → memory_persistence.py`という
+   一方向の依存だけで済むようにした(`reconcile.py → pipeline.py`という循環は作らない)。
+   12ステップの障害注入テスト(`test_process_all_auto_reconciles_raw_log_processed_in_markdown_but_never_committed_to_sqlite`、
+   `test_pipeline.py`)で、クラッシュ直後の不整合発生と、次回`process_all()`実行時の
+   自動修復(Memoryが重複しない・SQLiteとMarkdownの内容が一致する)の両方を確認して
+   いる。`sqlite3.Connection`はイミュータブルな拡張型でメソッドを直接monkeypatchできない
+   ため、`db.connect()`が返す接続を薄いプロキシ(`commit()`だけ差し替え、他は実接続へ
+   委譲)に差し替える形で「mark_processed成功直後の最初のcommit()だけ失敗させる」を
+   再現した。`test_reconcile.py` では `reconcile_processed_raw_logs()` 単体の
+   振る舞い(不整合なしなら何もしない・SQLite側の行欠落を直せる・Memoryが見つからない
+   異常系でReconcileErrorを送出する)も個別に検証している。
+4. **Memory IDの一意性がVault全体ではなく現在の分類typeのフォルダ内でしか保証されて
+   いなかった問題**: `memory_io.find_existing()` は以前、分類結果が示す1つのtypeの
+   フォルダしか見ていなかった。クラッシュと再試行の間に分類ロジック自体が変わっていた
+   場合(例: 同じ入力が前回はTHOUGHT、今回はDECISIONに分類される)、旧typeのフォルダに
+   ある既存ファイルを見失い、新typeのフォルダへ同じIDのMemoryを重複生成してしまう
+   可能性があった。`find_existing()` を、Vault全体(ただし`MEMORY_TYPE_FOLDER`にある
+   有限個・現在10種類のtypeフォルダに限定)からIDを探すように変更した。`rglob`による
+   Vault全体の再帰走査は使っていない: Memoryが置かれる場所はtype別フォルダに限られる
+   というVaultの構成上の不変条件を利用し、候補パスをtypeの種類数(定数)に固定している
+   ため、Vaultにraw log/daily log/添付ファイルがどれだけ増えても探索コストは変わらない。
+   同じIDのファイルが複数のtypeフォルダに見つかった場合(本来あり得ない異常な状態)は、
+   自動的にどちらかを選ばず `DuplicateMemoryError` を送出する。1回目の分類でTHOUGHTと
+   判定されMemory書き込み直後にクラッシュし、2回目の分類(分類ロジックの変更を模擬)では
+   DECISIONと判定される、というシナリオのテストを `test_pipeline.py` に追加し、
+   Vault全体でMemoryが1件だけであること・元のMarkdown(THOUGHT)が正として再利用される
+   こと・Decisionsフォルダに複製が作られないことを確認している。
+5. **legacy Entityのconfidenceフォールバックが1.0(方向が逆)だった問題**:
+   `memory_io.entity_objects()` は、`entity_details`を持たない旧形式のMemory
+   (`entities: [...]`のみ)に対して`confidence=1.0`(最大の信頼度)を割り当てていたが、
+   これは実態と逆である。`entity_details`が無いということは、そのデータはconfidenceに
+   よる重み付けという概念が導入される前の抽出器が出したものであり、その版は
+   「カタカナ連続2文字以上ならほぼ無条件にentityとみなす」というルールしか持たず、
+   一般的な外来語("アプリ"「スマホ」等)も選別なく拾っていた(現行版にある
+   `_GENERIC_HINTS`による減点や語長に基づく基礎confidenceの考え方が無い)。つまり
+   legacyデータは現行のconfidence設計から見て精度が現行の最低ラインより低い側であり、
+   1.0は逆方向の扱いになっていた。`_LEGACY_ENTITY_CONFIDENCE = 0.3` を新設して
+   採用した。この値は、現行の`entity_extract.py`で既知の一般語リストに載っていない
+   通常の語であっても最短カテゴリ(カタカナ2文字)に割り当てられる最も低い基礎confidence
+   (`_base_confidence(2) == 0.3`)と同じ水準であり、「legacy抽出はどの語であれ、現行
+   ヒューリスティックが付けうる最も慎重な評価と同程度にしか信頼しない」という保守的な
+   扱いになっている(採用理由の詳細は`memory_io.entity_objects()`のdocstringに記録)。
+   `test_memory_io.py` で、method="legacy"になること・confidenceが1.0でないこと・
+   legacy由来の一般語1件の一致だけではsame_topicと同等のstrengthを持つ強いリンクの
+   根拠にならないこと、をそれぞれ確認している。
+
+### 追加で確認した項目
+
+- **`vault.write_text_atomic()` のWindows安全性**: 一時ファイルは対象ファイルと同じ
+  ディレクトリに作るため同一ファイルシステム上に置かれることが保証されており(異なる
+  ボリューム間のrenameは原子的でない)、`Path.replace()`はWindows上でも既存ファイルへの
+  上書きを含めて原子的に行える(`os.rename()`単体とは異なる)。一時ファイル名にPIDを
+  含めることで複数プロセスの同時書き込みでも衝突しない。書き込み中の例外は一時ファイルを
+  削除してから再送出するため`*.tmp`の残骸が残らない。
+- **今回のSQLite変更の後方互換性**: 新規に追加したテーブル列やインデックスは無い
+  (`db.get_raw_log_processed_at`は既存の`raw_logs`テーブルへのSELECTのみ)。既存の
+  自己修復の仕組み(`_ensure_column`)にも変更を加えていないため、以前のバージョンで
+  作られたDBファイルもそのまま(reindex不要で)使い続けられる。データを破壊的に変更する
+  マイグレーションは今回のスコープに含まれていない。
+
 ## 実施した検証
 
-- `pytest tests/` — **69件、すべてPASS**。
+- `pytest tests/` — **89件、すべてPASS**(1回目のレビュー修正時点の69件 + 今回の
+  新規20件。既存テストの削除・置き換えは無い)。
+  - 新規20件の内訳: 候補探索の200件上限撤廃を201件規模で確認する2件
+    (`test_db_entities_links.py`)、`vault.write_text_atomic`の原子性・Windows安全性・
+    一時ファイル衝突回避を確認する6件(`test_vault.py`)、`find_existing`のVault全体
+    検索と重複検出・legacy entityのconfidenceを確認する6件(`test_memory_io.py`)、
+    分類ロジック変更をまたぐクラッシュ復旧シナリオ1件と12ステップの
+    reconcile障害注入テスト1件(`test_pipeline.py`)、`reconcile_processed_raw_logs()`
+    単体の振る舞いを確認する4件(`test_reconcile.py`)。
+  - 1回目のレビュー修正時点の69件(従来の51件 + 1回目レビュー修正での新規18件)は
+    削除・置き換えなしでそのまま維持。
+- 2回目のレビュー修正後も、`add` → `process`(entity抽出・link生成込み)→ `search` →
+  `reindex` の一連の流れを実際にPython APIで実行し、Markdown(frontmatterの
+  `entities`/`entity_details`/`links`/`link_details`)とSQLite(`memories`/
+  `memory_entities`/`links`テーブル)の内容が一致すること、`reindex`後も同じ内容が
+  復元されることを実データで確認した。
   - 従来の51件(Phase 1の25件 + Phase 2の26件)は、削除せず維持または内容を修正して
     引き継いだ。**削除・置き換えたのは、修正対象のバグの挙動そのものをテストしていた
     3件のみ**(`test_same_entity_creates_link_and_outranks_same_topic` /
@@ -264,15 +391,18 @@ Phase 2実装(コミット `6342152`)に対するレビューで5件の問題が
 - Entity抽出はカタカナヒューリスティックのみ。confidence補正はあるが、人名・地名の
   漢字表記や、ひらがな/漢字の一般名詞は一切拾えない。
 - `raw_log_io.mark_processed()` によるMarkdown更新と、そのprocessed_atをSQLiteへ
-  反映する `db.upsert_raw_log()` の間はトランザクションで結ばれていない。この間に
-  クラッシュすると、SQLite側の `raw_logs.processed_at` が実際より古い値のまま残る
-  ことがある(Markdown側は正しく更新済み)。Memoryの重複生成には繋がらないが、
-  `reindex` するまでSQLiteの表示上「未処理」に見える可能性がある、という限定的な
-  既知の不整合として明記しておく。
-- Raw Log本体・Daily Logの書き込みは(Memory書き込みとは異なり)原子的にしていない。
-  これらは「同じ入力からの再試行で重複が生じる」という失敗モードを持たないため
-  (`add`は常に新規入力、Daily Logへの追記はraw_log_id単位で冪等)、今回のスコープには
-  含めなかった。
+  反映する `db.upsert_raw_log()` の間は、依然として単一のトランザクションでは結ばれて
+  いない(2つの別々のストレージ(ファイルシステムとSQLite)にまたがる書き込みを1つの
+  atomicな操作にはできないため)。ただし2回目のレビュー修正により、この間にクラッシュ
+  しても**放置されず自動的に自己修復される**ようになった: `process_all()` が呼ばれる
+  たびに冒頭で `reconcile.reconcile_processed_raw_logs()` が実行され、
+  「Markdown上processed_at済みなのにSQLiteが未反映」の状態を検出して修復する。以前は
+  この不整合が`reindex`を手動実行するまで残り続けていたが、今はいずれ次回の通常運用
+  (`process_all()`の実行)の中で自動的に解消される。
+- Raw Log本体・Daily Logの書き込みも、2回目のレビュー修正でMemory Markdownと同じ
+  `vault.write_text_atomic()`経由になった(以前は非atomicだった)。Raw LogはVault内で
+  最も失ってはいけない原本であるため、書き込み途中のクラッシュに対する耐性を
+  Memoryと同水準にした。
 
 ## 今後(まだ実装していないもの)
 

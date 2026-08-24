@@ -20,6 +20,21 @@ apps/server/app/db_schema.sql で実際に動作検証済みの方式をその�
 満たせば候補になれる。Link自体の強さ・順位付け(どのくらい関連が強いか)は
 引き続きlinking.py(Python側)の責務のままにしてあり、DB層は「関連しうる
 Memoryの絞り込み」だけを担当する(責務分離)。
+
+【2回目のレビュー対応】find_candidates_by_* に付いていた `ORDER BY created_at
+DESC LIMIT 200` を撤廃した。これは「直近500件」問題を「条件一致した中の
+直近200件」に縮小しただけで、根本的には同じ欠陥(件数だけを理由に古い
+Memoryを除外する)を残していた。トピック/エンティティ/時間という条件自体が
+既に十分に意味のある絞り込みであるため、その結果をさらに件数で切り詰める
+必要はないと判断した。
+
+代わりに、絞り込んだ候補id集合を実際にDBへ問い合わせる側
+(list_memory_signals_by_ids / entities_for_memories)を `_chunked()` で
+バッチ分割するようにした。理由は、候補が増えた場合に `IN (?, ?, ...)` の
+プレースホルダ数がSQLiteの上限(SQLITE_MAX_VARIABLE_NUMBER)に達して
+クエリ自体が失敗する事態を避けるため。これにより「件数を理由に古い
+Memoryを除外しない」ことと「候補が増えても1回のクエリが破綻しない」ことの
+両方を、Python側で全件を毎回スキャンする構造に戻さずに満たす。
 """
 from __future__ import annotations
 
@@ -32,6 +47,16 @@ from typing import Iterator
 
 from brain_twin.config import Config
 from brain_twin.models import ExtractedEntity
+
+# SQLiteの `IN (?, ?, ...)` はプレースホルダ数に上限がある(SQLITE_MAX_VARIABLE_NUMBER。
+# ビルドにより999〜32766程度)。候補件数がどれだけ増えても1回のクエリが失敗しないよう、
+# id集合をこの単位で分割してから問い合わせる(_chunked参照)。
+_ID_QUERY_CHUNK_SIZE = 500
+
+
+def _chunked(items: list[str], size: int = _ID_QUERY_CHUNK_SIZE) -> Iterator[list[str]]:
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -198,6 +223,14 @@ def upsert_raw_log(conn: sqlite3.Connection, *, id: str, text: str, source: str,
     )
 
 
+def get_raw_log_processed_at(conn: sqlite3.Connection, raw_log_id: str) -> str | None:
+    """指定したraw_logのSQLite側processed_atを返す。行自体が存在しない場合もNoneを
+    返す(reconcile.py が「SQLite側にはまだ反映されていない」を判定する際、行の
+    不在とprocessed_at NULLを区別する必要が無いため、まとめてNoneにしている)。"""
+    row = conn.execute("SELECT processed_at FROM raw_logs WHERE id = ?", (raw_log_id,)).fetchone()
+    return row[0] if row else None
+
+
 def upsert_daily_log(conn: sqlite3.Connection, *, date: str, file_path: str, updated_at: str) -> None:
     conn.execute(
         """
@@ -272,35 +305,43 @@ def set_memory_entities(conn: sqlite3.Connection, memory_id: str, entities: list
 
 
 def entities_for_memories(conn: sqlite3.Connection, memory_ids: list[str]) -> dict[str, list[ExtractedEntity]]:
-    """複数memory_idのentitiesを1クエリでまとめて取得する(N+1を避ける)。"""
+    """複数memory_idのentitiesをまとめて取得する(N+1を避ける)。
+    id集合が大きくなっても1回のクエリが破綻しないよう、_chunked()でバッチに分けて
+    問い合わせる(プレースホルダ数の上限対策。db.pyモジュールdocstring参照)。"""
     if not memory_ids:
         return {}
-    placeholders = ",".join("?" for _ in memory_ids)
-    rows = conn.execute(
-        f"""
-        SELECT me.memory_id, e.name, me.confidence, me.method
-        FROM memory_entities me
-        JOIN entities e ON e.id = me.entity_id
-        WHERE me.memory_id IN ({placeholders})
-        """,
-        memory_ids,
-    ).fetchall()
     result: dict[str, list[ExtractedEntity]] = {mid: [] for mid in memory_ids}
-    for memory_id, name, confidence, method in rows:
-        result[memory_id].append(ExtractedEntity(name=name, confidence=confidence, method=method))
+    for batch in _chunked(memory_ids):
+        placeholders = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"""
+            SELECT me.memory_id, e.name, me.confidence, me.method
+            FROM memory_entities me
+            JOIN entities e ON e.id = me.entity_id
+            WHERE me.memory_id IN ({placeholders})
+            """,
+            batch,
+        ).fetchall()
+        for memory_id, name, confidence, method in rows:
+            result[memory_id].append(ExtractedEntity(name=name, confidence=confidence, method=method))
     return result
 
 
 def list_memory_signals_by_ids(conn: sqlite3.Connection, memory_ids: list[str]) -> list[MemorySignal]:
     """特定のid集合(find_candidates_by_*で絞り込んだ結果)のMemory軽量メタデータを
-    まとめて取得する。"""
+    まとめて取得する。id集合が大きくなっても1回のクエリが破綻しないよう、
+    _chunked()でバッチに分けて問い合わせる。"""
     if not memory_ids:
         return []
-    placeholders = ",".join("?" for _ in memory_ids)
-    rows = conn.execute(
-        f"SELECT id, topics_json, created_at FROM memories WHERE id IN ({placeholders})",
-        memory_ids,
-    ).fetchall()
+    rows: list[tuple] = []
+    for batch in _chunked(memory_ids):
+        placeholders = ",".join("?" for _ in batch)
+        rows.extend(
+            conn.execute(
+                f"SELECT id, topics_json, created_at FROM memories WHERE id IN ({placeholders})",
+                batch,
+            ).fetchall()
+        )
     entities_by_id = entities_for_memories(conn, [r[0] for r in rows])
     return [
         MemorySignal(id=r[0], topics=json.loads(r[1] or "[]"), created_at=r[2], entities=entities_by_id.get(r[0], []))
@@ -308,11 +349,12 @@ def list_memory_signals_by_ids(conn: sqlite3.Connection, memory_ids: list[str]) 
     ]
 
 
-def find_candidates_by_topics(conn: sqlite3.Connection, topics: list[str], *, exclude_id: str | None = None, limit: int = 200) -> set[str]:
+def find_candidates_by_topics(conn: sqlite3.Connection, topics: list[str], *, exclude_id: str | None = None) -> set[str]:
     """topics_json(JSON配列)に、指定したtopicのいずれかが含まれるactiveなMemoryを探す。
-    直近N件のような件数ベースの打ち切りは行わず、条件に一致する限り古いMemoryも
-    対象になる(limitは念のための安全上限であり、"最近のものだけ"という意味の
-    絞り込みではない)。"""
+    件数ベースの打ち切りは行わない(直近N件だけを見る、という絞り込みはしない)。
+    条件(topics)そのものが既に意味のある絞り込みであり、それをさらに件数で
+    切り詰めると、古いMemoryが機械的に除外されてしまうため(2回目のレビュー対応。
+    db.pyモジュールdocstring参照)。"""
     if not topics:
         return set()
     placeholders = ",".join("?" for _ in topics)
@@ -322,16 +364,14 @@ def find_candidates_by_topics(conn: sqlite3.Connection, topics: list[str], *, ex
         SELECT DISTINCT m.id
         FROM memories m, json_each(m.topics_json)
         WHERE json_each.value IN ({placeholders}) AND m.status = 'active' {exclude_clause}
-        ORDER BY m.created_at DESC
-        LIMIT ?
         """,
-        [*topics, *([exclude_id] if exclude_id else []), limit],
+        [*topics, *([exclude_id] if exclude_id else [])],
     ).fetchall()
     return {r[0] for r in rows}
 
 
-def find_candidates_by_entities(conn: sqlite3.Connection, entity_names: list[str], *, exclude_id: str | None = None, limit: int = 200) -> set[str]:
-    """指定したentity名のいずれかを持つactiveなMemoryを探す(直近N件への打ち切りなし)。"""
+def find_candidates_by_entities(conn: sqlite3.Connection, entity_names: list[str], *, exclude_id: str | None = None) -> set[str]:
+    """指定したentity名のいずれかを持つactiveなMemoryを探す(件数ベースの打ち切りなし)。"""
     if not entity_names:
         return set()
     placeholders = ",".join("?" for _ in entity_names)
@@ -343,27 +383,24 @@ def find_candidates_by_entities(conn: sqlite3.Connection, entity_names: list[str
         JOIN entities e ON e.id = me.entity_id
         JOIN memories m ON m.id = me.memory_id
         WHERE e.name IN ({placeholders}) AND m.status = 'active' {exclude_clause}
-        ORDER BY m.created_at DESC
-        LIMIT ?
         """,
-        [*entity_names, *([exclude_id] if exclude_id else []), limit],
+        [*entity_names, *([exclude_id] if exclude_id else [])],
     ).fetchall()
     return {r[0] for r in rows}
 
 
-def find_candidates_by_time_range(conn: sqlite3.Connection, start_iso: str, end_iso: str, *, exclude_id: str | None = None, limit: int = 200) -> set[str]:
+def find_candidates_by_time_range(conn: sqlite3.Connection, start_iso: str, end_iso: str, *, exclude_id: str | None = None) -> set[str]:
     """created_atが[start_iso, end_iso]の範囲に入るactiveなMemoryを探す
     (ISO8601文字列は同一フォーマットである限り辞書順比較が時系列順と一致するため、
-    BETWEENでの範囲検索がそのまま使える)。"""
+    BETWEENでの範囲検索がそのまま使える)。この検索自体が時間窓で既に絞られているため、
+    件数ベースの追加の打ち切りは付けていない。"""
     exclude_clause = "AND id != ?" if exclude_id else ""
     rows = conn.execute(
         f"""
         SELECT id FROM memories
         WHERE status = 'active' AND created_at BETWEEN ? AND ? {exclude_clause}
-        ORDER BY created_at DESC
-        LIMIT ?
         """,
-        [start_iso, end_iso, *([exclude_id] if exclude_id else []), limit],
+        [start_iso, end_iso, *([exclude_id] if exclude_id else [])],
     ).fetchall()
     return {r[0] for r in rows}
 

@@ -1,6 +1,11 @@
 """Layer 1 (Raw Log: 00_Inbox) と Layer 2 (Daily Log: 10_Daily) の読み書き
 (指示書4章)。原文は改変禁止のため、一度書いたraw logの本文には二度と触らない
 (処理済みフラグの更新以外は追記のみ)。
+
+【2回目のレビュー対応】書き込みは全て vault.write_text_atomic() 経由にしている。
+Raw LogはVaultの中で最も失ってはいけない原本(Markdown化する前の入力そのもの)
+であり、少なくともMemory Markdownと同等以上に書き込み途中のクラッシュに強くある
+べきという指摘に基づく。Daily Logも同じ理由で対象にした。
 """
 from __future__ import annotations
 
@@ -24,7 +29,7 @@ def write_raw_log(config: Config, text: str, source: str, dt: datetime | None = 
         "source": source,
         "processed_at": None,
     }
-    path.write_text(fm.dump(front, text), encoding="utf-8")
+    vault.write_text_atomic(path, fm.dump(front, text))
 
     return RawLog(
         id=raw_id,
@@ -63,7 +68,7 @@ def mark_processed(config: Config, raw_log: RawLog, processed_at: datetime | Non
     path = config.vault_dir / raw_log.file_path
     parsed = fm.parse(path.read_text(encoding="utf-8"))
     parsed.frontmatter["processed_at"] = processed_at.isoformat()
-    path.write_text(fm.dump(parsed.frontmatter, parsed.body), encoding="utf-8")
+    vault.write_text_atomic(path, fm.dump(parsed.frontmatter, parsed.body))
     raw_log.processed_at = processed_at.isoformat()
 
 
@@ -94,5 +99,5 @@ def append_to_daily_log(config: Config, raw_log: RawLog) -> Path:
     raw_log_ids.append(raw_log.id)
     body = body.rstrip("\n") + f"\n\n## {time_label}\n{raw_log.text}\n"
 
-    path.write_text(fm.dump(front, body), encoding="utf-8")
+    vault.write_text_atomic(path, fm.dump(front, body))
     return path
