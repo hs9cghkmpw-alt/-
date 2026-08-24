@@ -8,7 +8,7 @@ from datetime import datetime
 
 from brain_twin import classify, db, linking, memory_io, raw_log_io, vault
 from brain_twin.config import Config
-from brain_twin.models import Memory
+from brain_twin.models import ExtractedEntity, Memory, RawLog
 
 
 @dataclass
@@ -21,32 +21,93 @@ class ProcessSummary:
     memory_ids: list[str] = field(default_factory=list)
 
 
-def _suggest_links(conn: sqlite3.Connection, memory: Memory) -> list[linking.LinkSuggestion]:
+def _suggest_links(
+    conn: sqlite3.Connection, topics: list[str], entities: list[ExtractedEntity], created_at_iso: str
+) -> list[linking.LinkSuggestion]:
     """既存のactiveなMemoryの中から、このMemoryとリンクすべき候補を探す(指示書17・28章)。
-    このMemory自身はまだDBへ挿入していない時点で呼ぶこと(自己参照を避けるため、
+
+    候補探索そのものはSQLite側で絞り込む(同トピック/同エンティティ/時間範囲、それぞれを
+    db.find_candidates_by_* へ問い合わせて和集合を取る)。件数ベースの打ち切り
+    (「直近500件」等)は行わないため、古いMemoryであっても条件に一致すれば候補になれる
+    (過去のレビュー指摘: 全件Python走査+直近500件という設計は、長期記憶システムとして
+    古い(しかし重要な)Memoryを候補から除外してしまう問題があった)。
+
+    呼び出しは、このMemory自身をDBへ挿入する前に行うこと(自己参照を避けるため、
     exclude_idではなく「まだ存在しない」ことそのもので自然に除外している)。"""
-    target_created_at = datetime.fromisoformat(memory.created_at)
+    target_created_at = datetime.fromisoformat(created_at_iso)
+    window = linking.TEMPORAL_CLOSE_WINDOW
+
+    candidate_ids: set[str] = set()
+    candidate_ids |= db.find_candidates_by_topics(conn, topics)
+    candidate_ids |= db.find_candidates_by_entities(conn, [e.name for e in entities])
+    if window.total_seconds() > 0:
+        window_start = (target_created_at - window).isoformat()
+        window_end = (target_created_at + window).isoformat()
+        candidate_ids |= db.find_candidates_by_time_range(conn, window_start, window_end)
+
+    if not candidate_ids:
+        return []
+
+    signals = db.list_memory_signals_by_ids(conn, list(candidate_ids))
     candidates = [
-        linking.MemoryCandidate(
-            id=sig.id, topics=sig.topics, entities=sig.entities,
-            created_at=datetime.fromisoformat(sig.created_at),
-        )
-        for sig in db.list_active_memory_signals(conn, limit=500)
+        linking.MemoryCandidate(id=s.id, topics=s.topics, entities=s.entities, created_at=datetime.fromisoformat(s.created_at))
+        for s in signals
     ]
-    return linking.suggest_links(memory.topics, memory.entities, target_created_at, candidates)
+    return linking.suggest_links(topics, entities, target_created_at, candidates)
 
 
-def _apply_link_suggestions(memory: Memory, suggestions: list[linking.LinkSuggestion]) -> None:
+def _apply_link_suggestions(memory: Memory, suggestions: list[linking.LinkSuggestion], created_at_iso: str) -> None:
     """frontmatter用の links(Obsidian向け、重複targetは1つにまとめる)と、
-    reindexで完全に復元するための link_details の両方をMemoryへセットする。"""
+    reindexや再実行時の復元に使う link_details(target/relation_type/reason/created_at)
+    の両方をMemoryへセットする。
+
+    created_atをここで固定して各link_detailsへ埋め込むのは、reindexが
+    Memory.created_at(=Memoryの作成時刻)をlinkの生成時刻として代用してしまい、
+    SQLite再構築のたびにlink.created_atが変わってしまう問題を防ぐため
+    (過去のレビュー指摘)。"""
     seen: list[str] = []
     for s in suggestions:
         if s.target_memory_id not in seen:
             seen.append(s.target_memory_id)
     memory.links = [linking.to_wikilink(tid) for tid in seen]
     memory.link_details = [
-        {"target": s.target_memory_id, "relation_type": s.relation_type, "reason": s.reason} for s in suggestions
+        {
+            "target": s.target_memory_id,
+            "relation_type": s.relation_type,
+            "reason": s.reason,
+            "created_at": created_at_iso,
+        }
+        for s in suggestions
     ]
+
+
+def _persist_memory_row(conn: sqlite3.Connection, memory: Memory) -> None:
+    db.upsert_memory(
+        conn,
+        id=memory.id, type=memory.type.value, created_at=memory.created_at,
+        event_date=memory.event_date, importance=memory.importance,
+        confidence=memory.confidence, source=memory.source, status=memory.status.value,
+        title=memory.title, content=memory.content, raw_log_id=memory.raw_log_id,
+        file_path=memory.file_path, topics_json=json.dumps(memory.topics, ensure_ascii=False),
+    )
+
+
+def _persist_links(conn: sqlite3.Connection, memory_id: str, link_details: list[dict], fallback_created_at: str) -> None:
+    """link_details(Markdownに書かれている内容)をそのままSQLiteへ反映する。
+    新規生成時・reindex時・process再実行時(クラッシュからの復旧)のすべてでこの関数を
+    通すことで、『SQLiteの内容は常にMarkdownの言っていることの写し』という原則を
+    1箇所に集約する。fallback_created_atは、このfix以前に書かれたlink_details
+    (created_atを持たない)を読んだ場合の後方互換用。"""
+    for detail in link_details:
+        target = detail.get("target")
+        if not target:
+            continue
+        db.upsert_link(
+            conn, source_memory_id=memory_id, target_memory_id=target,
+            relation_type=detail.get("relation_type", "related"),
+            reason=detail.get("reason", ""),
+            created_at=detail.get("created_at") or fallback_created_at,
+        )
 
 
 def add_capture(config: Config, text: str, source: str = "cli") -> str:
@@ -66,6 +127,39 @@ def add_capture(config: Config, text: str, source: str = "cli") -> str:
         conn.commit()
 
     return raw_log.id
+
+
+def _process_one(config: Config, conn: sqlite3.Connection, raw_log: RawLog) -> tuple[Memory | None, int]:
+    """1件のRaw Logを分類し、Memory昇格が必要なら書き込む。
+    戻り値は (作成/再利用したMemory or None, そのMemoryのlink件数)。
+
+    Memory IDはraw_log_idから決定的に導出される(ids.derive_memory_id)ため、
+    このraw_logに対応するMemoryファイルが既に存在する場合(前回のprocessがMemory
+    書き込み後・SQLite反映前にクラッシュしたケース)は、それを正としてそのまま再利用し、
+    新しいMemoryを作らない(二重生成防止。過去のレビュー指摘、最優先の修正項目)。
+    このとき、links/entitiesもファイルに書かれている内容をそのまま使い、
+    再計算はしない(再計算すると、クラッシュ前後で候補となる他のMemoryの状況が
+    変わっている可能性があり、結果が変わって一貫性が崩れうるため)。
+    """
+    result = classify.classify(raw_log.text)
+    if not result.is_memory_worthy:
+        return None, 0
+
+    memory = memory_io.build_memory(raw_log, result)
+    existing = memory_io.find_existing(config, memory.id, memory.type)
+
+    if existing is not None:
+        memory = existing
+    else:
+        suggestions = _suggest_links(conn, result.topics, result.entities, memory.created_at)
+        _apply_link_suggestions(memory, suggestions, datetime.now().astimezone().isoformat())
+        memory = memory_io.write_memory(config, memory)
+
+    _persist_memory_row(conn, memory)
+    db.set_memory_entities(conn, memory.id, memory_io.entity_objects(memory))
+    _persist_links(conn, memory.id, memory.link_details, fallback_created_at=memory.created_at)
+
+    return memory, len(memory.link_details)
 
 
 def process_all(config: Config) -> ProcessSummary:
@@ -88,36 +182,11 @@ def process_all(config: Config) -> ProcessSummary:
             touched_dates.add(date_str)
             summary.daily_log_saved += 1
 
-            result = classify.classify(raw_log.text)
-            if result.is_memory_worthy:
-                memory = memory_io.build_memory(raw_log, result)
-
-                # linkの候補探索は、このMemory自身をDBへ挿入する前に行う
-                # (自己リンクを避けるため。_suggest_links のdocstring参照)。
-                suggestions = _suggest_links(conn, memory)
-                _apply_link_suggestions(memory, suggestions)
-
-                memory = memory_io.write_memory(config, memory)
-                db.upsert_memory(
-                    conn,
-                    id=memory.id, type=memory.type.value, created_at=memory.created_at,
-                    event_date=memory.event_date, importance=memory.importance,
-                    confidence=memory.confidence, source=memory.source, status=memory.status.value,
-                    title=memory.title, content=memory.content, raw_log_id=memory.raw_log_id,
-                    file_path=memory.file_path, topics_json=json.dumps(memory.topics, ensure_ascii=False),
-                )
-                db.set_memory_entities(conn, memory.id, memory.entities)
-
-                link_created_at = datetime.now().astimezone().isoformat()
-                for s in suggestions:
-                    db.upsert_link(
-                        conn, source_memory_id=memory.id, target_memory_id=s.target_memory_id,
-                        relation_type=s.relation_type, reason=s.reason, created_at=link_created_at,
-                    )
-                summary.links_created += len(suggestions)
-
+            memory, link_count = _process_one(config, conn, raw_log)
+            if memory is not None:
                 summary.memories_created += 1
                 summary.memory_ids.append(memory.id)
+                summary.links_created += link_count
             else:
                 summary.kept_as_chat += 1
 
@@ -168,30 +237,15 @@ def reindex(config: Config) -> dict[str, int]:
 
         memories = memory_io.list_all_memories(config)
         for memory in memories:
-            db.upsert_memory(
-                conn,
-                id=memory.id, type=memory.type.value, created_at=memory.created_at,
-                event_date=memory.event_date, importance=memory.importance,
-                confidence=memory.confidence, source=memory.source, status=memory.status.value,
-                title=memory.title, content=memory.content, raw_log_id=memory.raw_log_id,
-                file_path=memory.file_path, topics_json=json.dumps(memory.topics, ensure_ascii=False),
-            )
-            db.set_memory_entities(conn, memory.id, memory.entities)
+            _persist_memory_row(conn, memory)
+            db.set_memory_entities(conn, memory.id, memory_io.entity_objects(memory))
             counts["memories"] += 1
 
         # linksは全Memoryを挿入し終えてから2周目でまとめて登録する。target側のMemoryが
         # 先に存在している必要がある(外部キー制約)ため、1周目と同じループでは行えない。
         for memory in memories:
-            for detail in memory.link_details:
-                target = detail.get("target")
-                if not target:
-                    continue
-                db.upsert_link(
-                    conn, source_memory_id=memory.id, target_memory_id=target,
-                    relation_type=detail.get("relation_type", "related"),
-                    reason=detail.get("reason", ""), created_at=memory.created_at,
-                )
-                counts["links"] += 1
+            _persist_links(conn, memory.id, memory.link_details, fallback_created_at=memory.created_at)
+            counts["links"] += len(memory.link_details)
 
         conn.commit()
 

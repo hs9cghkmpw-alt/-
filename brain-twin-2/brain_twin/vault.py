@@ -57,3 +57,17 @@ def ensure_vault(config: Config) -> None:
 
 def relative_to_vault(path: Path, config: Config) -> str:
     return str(path.resolve().relative_to(config.vault_dir.resolve())).replace("\\", "/")
+
+
+def write_text_atomic(path: Path, content: str) -> None:
+    """一時ファイルへ書いてから rename する(同一ファイルシステム内では原子的)ことで、
+    書き込みの途中でプロセスが落ちても、対象パスには「書き込み前の状態」か
+    「書き込み後の完全な内容」のどちらかしか存在しない状態を保つ。
+
+    Memory Markdownは「再実行時に既存ファイルを検出して二重生成を防ぐ」
+    (pipeline.py の find_existing 連携)ための拠り所になるため、この保証が重要になる
+    (途中で壊れた不完全なファイルがあると、それを正として読み込もうとして
+    かえって壊れてしまうため)。"""
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(path)

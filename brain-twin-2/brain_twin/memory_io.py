@@ -7,7 +7,15 @@ from pathlib import Path
 from brain_twin import frontmatter as fm
 from brain_twin import ids, vault
 from brain_twin.config import Config
-from brain_twin.models import MEMORY_TYPE_FOLDER, ClassificationResult, Memory, MemoryStatus, MemoryType, RawLog
+from brain_twin.models import (
+    MEMORY_TYPE_FOLDER,
+    ClassificationResult,
+    ExtractedEntity,
+    Memory,
+    MemoryStatus,
+    MemoryType,
+    RawLog,
+)
 
 
 def _folder_for_type(config: Config, mem_type: MemoryType) -> Path:
@@ -18,10 +26,14 @@ def _folder_for_type(config: Config, mem_type: MemoryType) -> Path:
     return folder
 
 
+def _memory_path(config: Config, memory_id: str, mem_type: MemoryType) -> Path:
+    return _folder_for_type(config, mem_type) / f"{memory_id}.md"
+
+
 def build_memory(raw_log: RawLog, classification: ClassificationResult, dt: datetime | None = None) -> Memory:
     dt = dt or datetime.fromisoformat(raw_log.created_at)
     return Memory(
-        id="",  # write_memoryで確定させる
+        id=ids.derive_memory_id(raw_log.id),
         type=classification.type,
         created_at=dt.isoformat(),
         event_date=dt.strftime("%Y-%m-%d"),
@@ -33,19 +45,50 @@ def build_memory(raw_log: RawLog, classification: ClassificationResult, dt: date
         content=raw_log.text,
         raw_log_id=raw_log.id,
         topics=classification.topics,
-        entities=classification.entities,
+        entities=[e.name for e in classification.entities],
+        entity_details=[{"name": e.name, "confidence": e.confidence, "method": e.method} for e in classification.entities],
         links=[],
+        link_details=[],
     )
+
+
+def find_existing(config: Config, memory_id: str, mem_type: MemoryType) -> Memory | None:
+    """指定したIDのMemoryが既にVaultへ書き込み済みかどうかを確認する。
+
+    Memory IDはraw_log_idから決定的に導出される(ids.derive_memory_id)ため、
+    processが同じraw_logを再試行した場合(前回の実行がMemory書き込み後・SQLite
+    反映前にクラッシュしたケース)、この関数がファイルの存在を検出することで、
+    pipeline.py が新しいMemoryを二重に作らず、書き込み済みの内容をそのまま
+    正として使えるようになる(指示書25章: Markdownが正本)。"""
+    path = _memory_path(config, memory_id, mem_type)
+    if not path.exists():
+        return None
+    return read_memory(path, config)
+
+
+def entity_objects(memory: Memory) -> list[ExtractedEntity]:
+    """memory.entity_details(name/confidence/method)があればそれを ExtractedEntity へ
+    復元する。無ければ memory.entities(名前のみ)から confidence=1.0 のフォールバックを
+    組み立てる(後方互換性: このフィールドが存在しなかった時点で書かれたMemoryファイル
+    でも壊れずに動く)。"""
+    if memory.entity_details:
+        return [
+            ExtractedEntity(
+                name=d["name"],
+                confidence=float(d.get("confidence", 1.0)),
+                method=str(d.get("method", "legacy")),
+            )
+            for d in memory.entity_details
+        ]
+    return [ExtractedEntity(name=name, confidence=1.0, method="legacy") for name in memory.entities]
 
 
 def write_memory(config: Config, memory: Memory) -> Memory:
     if not memory.id:
-        dt_for_id = datetime.fromisoformat(memory.created_at)
-        memory.id = ids.new_id(config.vault_dir, "mem", dt_for_id)
+        raise ValueError("Memory.id が未設定です。build_memory() 経由で決定的に採番してから呼び出してください。")
 
-    folder = _folder_for_type(config, memory.type)
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{memory.id}.md"
+    path = _memory_path(config, memory.id, memory.type)
+    path.parent.mkdir(parents=True, exist_ok=True)
 
     front = {
         "id": memory.id,
@@ -58,6 +101,7 @@ def write_memory(config: Config, memory: Memory) -> Memory:
         "status": memory.status.value,
         "topics": memory.topics,
         "entities": memory.entities,
+        "entity_details": memory.entity_details,
         "links": memory.links,
         "link_details": memory.link_details,
         "raw_log_id": memory.raw_log_id,
@@ -70,7 +114,7 @@ def write_memory(config: Config, memory: Memory) -> Memory:
         f"- source: {memory.source}\n"
         f"- created: {memory.created_at}\n"
     )
-    path.write_text(fm.dump(front, body), encoding="utf-8")
+    vault.write_text_atomic(path, fm.dump(front, body))
     memory.file_path = vault.relative_to_vault(path, config)
     return memory
 
@@ -108,6 +152,7 @@ def read_memory(path: Path, config: Config) -> Memory:
         raw_log_id=front.get("raw_log_id"),
         topics=list(front.get("topics") or []),
         entities=list(front.get("entities") or []),
+        entity_details=list(front.get("entity_details") or []),
         links=list(front.get("links") or []),
         link_details=list(front.get("link_details") or []),
         file_path=vault.relative_to_vault(path, config),

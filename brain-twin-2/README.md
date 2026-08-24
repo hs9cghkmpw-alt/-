@@ -35,6 +35,10 @@ pip install -r requirements.txt
 pytest tests/ -q
 ```
 
+`brain-twin-2/` 配下の変更をpush/PRすると、`.github/workflows/brain-twin-2-tests.yml` が
+自動的に `pytest tests/` を実行する(最小限のCI。他プロジェクト(`brain-twin/`)や
+本体の設計には影響しない)。
+
 ## 使い方
 
 ```bash
@@ -76,7 +80,7 @@ brain-twin-2/
 │  ├ pipeline.py          # add / process / reindex の実処理
 │  ├ search.py            # 簡易Hybrid Retrieval
 │  └ cli.py               # argparseによるコマンド定義
-├ tests/                  # pytest (51 tests)
+├ tests/                  # pytest (69 tests)
 ├ scripts/setup.ps1
 ├ vault/                  # 実際のVault(Git管理外、実行時に自動生成)
 └ data/                   # SQLite index(Git管理外)
@@ -109,9 +113,10 @@ vault/
 - **PyYAMLを依存に追加した**: frontmatterの読み書きを自前の簡易パーサで済ませることもできたが、
   往復での破損(日本語・リスト・null等)のリスクを避けるため、実績のあるPyYAMLを採用した。
   「Dockerを必須にしない」という指示書の方針に反しない範囲の、軽量なpip依存1つのみ。
-- **ID生成はSQLiteに依存させず、Vault上の既存ファイルをスキャンして決めている**
-  (`brain_twin/ids.py`)。指示書25章「SQLiteが壊れてもMarkdownから再構築可能にする」を
-  ID生成の場面でも徹底するため。
+- **ID生成は2種類を使い分ける**(`brain_twin/ids.py`)。raw_logはVault上の既存ファイルを
+  スキャンして連番を決める(指示書25章「SQLiteが壊れてもMarkdownから再構築可能にする」を
+  ID生成の場面でも徹底するため)。Memoryは(2026-08-24のレビュー修正で)raw_log_idから
+  決定的に導出する方式へ変更した。理由は後述の「レビュー修正」節を参照。
 - **グローバルな接続オブジェクトを作らない設計にした**: 全関数が `Config` を明示的な引数として
   受け取り、DB接続もその都度 `db.connect(config)` で開く。これは指示書15章が警告している
   「app.db.engineがimport時に固定され、テスト用DBへの差し替えが効かない」という過去の回帰を
@@ -173,32 +178,101 @@ vault/
   補う最小限の対応とした(`test_connect_self_heals_pre_phase2_links_table_missing_reason_column`
   で検証済み)。
 
+## レビュー修正(2026-08-24)
+
+Phase 2実装(コミット `6342152`)に対するレビューで5件の問題が指摘され、以下のように対応した。
+既存の設計・アーキテクチャ(責務分離: db層/linking層/entity_extract層/memory_io層)は
+変更していない。
+
+1. **Entity誤検出が強いリンク根拠になっていた問題**: `entity_extract.py` が返す型を
+   `list[str]` から `list[ExtractedEntity]`(name/confidence/method)へ変更し、
+   `linking.py` の `same_entity` strengthを「両側confidenceの最小値」で重み付けするように
+   変更した。confidenceの算出はSTOPWORDSの無限拡張ではなく、カタカナの長さに基づく
+   基礎値(短いほど低い)+小さな補助リストによる軽い減点、という組み合わせにした。
+   これに伴い `memory_entities` テーブルへ `confidence`/`method` 列を追加し、
+   (Phase 2時点のスキーマからの追従のため)`db.connect()` の自己修復対象に加えた。
+2. **MAX_LINKS_PER_MEMORYの意味の誤り**: `linking._select_top_memories()` で、
+   「target_memory_idごとの合計strengthで上位10件のMemoryを選び、選ばれたMemoryに
+   付随する全relationをそのまま返す」方式に変更した(以前はrelation行単位で10件に
+   切っていたため、1ペアに複数種類の関連が発生すると実質3〜4件しか残らなかった)。
+   「10 relatedMemory」を意図した設計だったと判断し、そのように修正した
+   (判断理由は `linking.py` のモジュールdocstringにも記録)。
+3. **直近500件への打ち切り**: `db.list_active_memory_signals`(全件Python走査)を廃止し、
+   `db.find_candidates_by_topics` / `find_candidates_by_entities` /
+   `find_candidates_by_time_range` の3つに分割した。それぞれSQLite側で絞り込み
+   (`json_each`によるtopics_jsonの展開、entities/memory_entitiesのJOIN、
+   created_atのBETWEEN)を行い、和集合を候補とする。件数ベースの打ち切りをやめたため、
+   何年前のMemoryであっても、トピック・エンティティ・時間のいずれかが一致すれば
+   候補になれる。スコアリング・順位付け(どれだけ強い関連か)は引き続き `linking.py`
+   (Python側)の責務のままにしてあり、DB層は「関連しうる候補の絞り込み」だけを担当する。
+4. **reindex時にlink.created_atが失われる問題**: `link_details` の各要素へ
+   `created_at`(そのリンクが生成された時刻)を追加し、`reindex`・process再実行時の
+   どちらもこの値を使ってSQLiteへ書き戻すようにした(`pipeline._persist_links`に
+   集約)。この修正より前に書かれたMemory(`link_details`に`created_at`を持たない)は
+   `Memory.created_at`(Memory自体の作成時刻)にフォールバックする
+   (`test_reindex_falls_back_to_memory_created_at_for_link_details_without_created_at`
+   で検証)。
+5. **process途中失敗時の二重Memory生成(最優先)**: Memory IDの採番方式を、
+   Vaultスキャンによる連番(`ids.new_id`)から、raw_log_idからの決定的な導出
+   (`ids.derive_memory_id`: `raw_20260824_003` → `mem_20260824_003`)へ変更した。
+   これにより、同じraw_logに対するprocessが何度再試行されても、常に同じMemory IDを
+   指す。`pipeline._process_one` は書き込み前に `memory_io.find_existing()` で
+   既存ファイルの有無を確認し、存在すればそれを正として再利用する(entities/linksの
+   再計算はしない。再計算すると、クラッシュ前後で他のMemoryの状況が変わっている
+   可能性があり、結果が変わって一貫性が崩れうるため)。あわせて、Memory Markdownの
+   書き込み自体も一時ファイル+rename方式で原子的にした(`vault.write_text_atomic`)。
+   これは今回のテストシナリオ自体が要求するものではないが、
+   「書き込み済みファイルを正として再利用する」という仕組み全体が、書き込み途中の
+   破損ファイルに対しては機能しないため、その前提を守るために追加した
+   (この判断もこの節で明記しておく)。
+
 ## 実施した検証
 
-- `pytest tests/` — **51件、すべてPASS**。内訳:
-  - Phase 1由来の25件(ID生成、frontmatterの往復、分類器のキーワード判定、
-    add→process→search→reindexの一連の流れ、雑談がMemoryに昇格しないこと、処理の冪等性、
-    SQLite全消去後にVaultから完全に再構築できること)。**引き続きすべてPASSしており、
-    Phase 2の変更による回帰は無いことを確認済み**。
-  - Phase 2で追加した26件: カタカナEntity抽出(`test_entity_extract.py`)、Link生成の
-    純粋ロジック(`test_linking.py`: same_topic/same_entity/temporal_relation、
-    strengthによる優先順位、上限件数)、db.py の entity/link CRUD(`test_db_entities_links.py`:
-    冪等性、バッチ取得、外部キー制約、スキーマ自己修復)、process/reindex経由の
-    end-to-end確認(`test_pipeline.py`: entityがfrontmatter・SQLite双方に反映されること、
-    共有entityでMemoryがリンクされること、無関係なMemoryはリンクされないこと、
-    SQLite全消去後もentities/linksが完全に復元されること、search結果にentitiesが
-    含まれること)。
+- `pytest tests/` — **69件、すべてPASS**。
+  - 従来の51件(Phase 1の25件 + Phase 2の26件)は、削除せず維持または内容を修正して
+    引き継いだ。**削除・置き換えたのは、修正対象のバグの挙動そのものをテストしていた
+    3件のみ**(`test_same_entity_creates_link_and_outranks_same_topic` /
+    `test_max_links_per_memory_cap` / `test_list_active_memory_signals_excludes_given_id`)。
+    いずれも同じ観点を検証する修正後版に置き換えており、カバレッジは失っていない
+    (詳細はgit差分参照)。
+  - 新規18件: Entityのconfidence算出(`test_entity_extract.py`)、confidenceに基づく
+    リンク強度の逆転可能性(`test_linking.py`)、DB側候補探索が古いMemoryも見つけること
+    (`test_db_entities_links.py`)、reindexでのlink.created_at完全一致と後方互換
+    フォールバック、そして**最優先項目である障害復旧テスト2件**
+    (`test_process_recovers_from_crash_after_memory_write_without_duplicating`:
+    Memory書き込み後・DB反映前のクラッシュ、
+    `test_process_recovers_from_crash_before_raw_log_marked_processed`:
+    DB反映後・raw_log処理済みマーク前のクラッシュ)を `test_pipeline.py` に追加した
+    (`monkeypatch`で`db.upsert_memory`/`raw_log_io.mark_processed`を1回だけ失敗させる
+    方式。本番コードに例外注入用のフックは追加していない)。
 - 指示書37章の完成条件(`add` → `process` → `search`)、およびentity/link生成を含む
-  一連の流れを実際にCLIで実行し、生成されたMarkdown(frontmatterの `entities` / `links` /
-  `link_details`)とSQLiteの中身を直接確認した。SQLite全消去→`reindex`後に
-  links/entitiesが完全に一致することも実データで確認済み。
-- Phase 1で作られた(reason列の無い)`links` テーブルを模したDBに対して実際に
-  `process` を実行し、自己修復(列追加)が機能してエラーにならないことを確認済み。
+  一連の流れを実際にCLIで実行し、生成されたMarkdown(frontmatterの `entities` /
+  `entity_details` / `links` / `link_details`)とSQLiteの中身を直接確認した。
+  confidenceが期待通りの値(一般語"アプリ"は低く、"ナイキ"のような3文字語より
+  さらに低い)になっていることも実データで確認済み。SQLite全消去→`reindex`後に
+  links(created_at含む)/entities(confidence/method含む)が完全に一致することも
+  実データで確認済み。
+- Phase 1で作られた(reason列の無い)`links` テーブル、およびこのレビュー修正より前の
+  (confidence/method列の無い)`memory_entities` テーブルを模したDBに対して実際に
+  処理を実行し、どちらも自己修復(列追加)が機能してエラーにならないことを確認済み。
 - **Docker実機検証はしていません**(このプロジェクトはDockerを使わない設計)。
 - 実際のObsidianアプリでVaultを開いての目視確認は**未実施**です(このセッションの環境に
-  Obsidianが無いため)。frontmatterとしての妥当性・wikilink文字列の形式はテストと
-  手動確認で検証済みですが、Obsidianのグラフビュー上での実際の見え方(Linked Mentions
-  パネルでの双方向表示等)は実機での確認をお願いします。
+  Obsidianが無いため)。
+
+## 既知の限界
+
+- Entity抽出はカタカナヒューリスティックのみ。confidence補正はあるが、人名・地名の
+  漢字表記や、ひらがな/漢字の一般名詞は一切拾えない。
+- `raw_log_io.mark_processed()` によるMarkdown更新と、そのprocessed_atをSQLiteへ
+  反映する `db.upsert_raw_log()` の間はトランザクションで結ばれていない。この間に
+  クラッシュすると、SQLite側の `raw_logs.processed_at` が実際より古い値のまま残る
+  ことがある(Markdown側は正しく更新済み)。Memoryの重複生成には繋がらないが、
+  `reindex` するまでSQLiteの表示上「未処理」に見える可能性がある、という限定的な
+  既知の不整合として明記しておく。
+- Raw Log本体・Daily Logの書き込みは(Memory書き込みとは異なり)原子的にしていない。
+  これらは「同じ入力からの再試行で重複が生じる」という失敗モードを持たないため
+  (`add`は常に新規入力、Daily Logへの追記はraw_log_id単位で冪等)、今回のスコープには
+  含めなかった。
 
 ## 今後(まだ実装していないもの)
 

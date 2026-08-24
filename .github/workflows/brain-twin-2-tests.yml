@@ -1,0 +1,28 @@
+name: brain-twin-2 tests
+
+on:
+  push:
+    paths:
+      - "brain-twin-2/**"
+      - ".github/workflows/brain-twin-2-tests.yml"
+  pull_request:
+    paths:
+      - "brain-twin-2/**"
+      - ".github/workflows/brain-twin-2-tests.yml"
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: brain-twin-2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - run: python -m pytest tests/ -v

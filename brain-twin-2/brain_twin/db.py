@@ -7,9 +7,23 @@ Markdown(Vault)が正本で、ここは検索用のindexに過ぎない。
 FTS5のtrigramトークナイザ + トリガーによる同期は、brain-twin(FastAPI版)の
 apps/server/app/db_schema.sql で実際に動作検証済みの方式をそのまま踏襲している
 (指示書38章: 既存構成の再利用可能部分)。
+
+--- Link候補探索について(レビュー対応) ---
+
+以前は「直近500件のMemoryを丸ごとPythonへロードし、Python側で全件比較する」
+方式だったが、Brain Twinは長期記憶システムであり、件数が増えるほど古い
+(しかし重要な)Memoryが候補から機械的に除外されてしまう問題があった。
+
+代わりに、「同トピック」「同エンティティ」「時間的に近い」という3種類の候補探索
+それぞれをSQLite側のクエリで行う(find_candidates_by_*)。これにより、
+古いMemoryであっても、実際に関連しうる条件(トピック/エンティティ/時間)を
+満たせば候補になれる。Link自体の強さ・順位付け(どのくらい関連が強いか)は
+引き続きlinking.py(Python側)の責務のままにしてあり、DB層は「関連しうる
+Memoryの絞り込み」だけを担当する(責務分離)。
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -17,6 +31,7 @@ from pathlib import Path
 from typing import Iterator
 
 from brain_twin.config import Config
+from brain_twin.models import ExtractedEntity
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -55,6 +70,7 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS idx_memories_event_date ON memories (event_date);
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories (type);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories (status);
+CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories (created_at);
 
 CREATE TABLE IF NOT EXISTS entities (
     id    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,8 +78,10 @@ CREATE TABLE IF NOT EXISTS entities (
 );
 
 CREATE TABLE IF NOT EXISTS memory_entities (
-    memory_id  TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-    entity_id  INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    entity_id   INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    confidence  REAL NOT NULL DEFAULT 1.0,
+    method      TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (memory_id, entity_id)
 );
 
@@ -119,8 +137,8 @@ class SearchHit:
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
     """`CREATE TABLE IF NOT EXISTS` は既存テーブルに新しい列を追加してくれないため、
-    Phase 1時点で作られた古いindex(links.reason列が無い状態)を持つ環境でも
-    次回実行時に自動で追従できるようにする(指示書34章: データ消失禁止。
+    以前のバージョンで作られた古いindex(reason/confidence/method列が無い状態)を
+    持つ環境でも次回実行時に自動で追従できるようにする(指示書34章: データ消失禁止。
     再構築(reindex)を使わなくても壊れないようにする最小限の自己修復)。"""
     existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in existing:
@@ -130,6 +148,8 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
 def _apply_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     _ensure_column(conn, "links", "reason", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "memory_entities", "confidence", "REAL NOT NULL DEFAULT 1.0")
+    _ensure_column(conn, "memory_entities", "method", "TEXT NOT NULL DEFAULT ''")
     conn.commit()
 
 
@@ -227,7 +247,7 @@ class MemorySignal:
     id: str
     topics: list[str]
     created_at: str  # ISO8601
-    entities: list[str]
+    entities: list[ExtractedEntity]
 
 
 def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
@@ -236,69 +256,116 @@ def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
     return row[0]
 
 
-def set_memory_entities(conn: sqlite3.Connection, memory_id: str, entity_names: list[str]) -> None:
-    """このMemoryのentity集合を丸ごと置き換える(reindexで何度実行しても同じ結果になるよう冪等)。"""
+def set_memory_entities(conn: sqlite3.Connection, memory_id: str, entities: list[ExtractedEntity]) -> None:
+    """このMemoryのentity集合を丸ごと置き換える(reindexや再実行で何度実行しても
+    同じ結果になるよう冪等)。confidence/methodも一緒に保存し、link候補探索
+    (find_candidates_by_entities)や将来のUIで「どれくらい確からしいentityか」を
+    参照できるようにする。"""
     conn.execute("DELETE FROM memory_entities WHERE memory_id = ?", (memory_id,))
-    for name in entity_names:
-        entity_id = get_or_create_entity(conn, name)
+    for entity in entities:
+        entity_id = get_or_create_entity(conn, entity.name)
         conn.execute(
-            "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
-            (memory_id, entity_id),
+            "INSERT INTO memory_entities (memory_id, entity_id, confidence, method) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(memory_id, entity_id) DO NOTHING",
+            (memory_id, entity_id, entity.confidence, entity.method),
         )
 
 
-def entities_for_memories(conn: sqlite3.Connection, memory_ids: list[str]) -> dict[str, list[str]]:
+def entities_for_memories(conn: sqlite3.Connection, memory_ids: list[str]) -> dict[str, list[ExtractedEntity]]:
     """複数memory_idのentitiesを1クエリでまとめて取得する(N+1を避ける)。"""
     if not memory_ids:
         return {}
     placeholders = ",".join("?" for _ in memory_ids)
     rows = conn.execute(
         f"""
-        SELECT me.memory_id, e.name
+        SELECT me.memory_id, e.name, me.confidence, me.method
         FROM memory_entities me
         JOIN entities e ON e.id = me.entity_id
         WHERE me.memory_id IN ({placeholders})
         """,
         memory_ids,
     ).fetchall()
-    result: dict[str, list[str]] = {mid: [] for mid in memory_ids}
-    for memory_id, name in rows:
-        result[memory_id].append(name)
+    result: dict[str, list[ExtractedEntity]] = {mid: [] for mid in memory_ids}
+    for memory_id, name, confidence, method in rows:
+        result[memory_id].append(ExtractedEntity(name=name, confidence=confidence, method=method))
     return result
 
 
-def list_active_memory_signals(conn: sqlite3.Connection, *, exclude_id: str | None = None, limit: int = 500) -> list[MemorySignal]:
-    """Link候補となる、既存の有効なMemoryの軽量メタデータを新しい順に取得する。"""
-    import json as _json
-
-    if exclude_id is not None:
-        rows = conn.execute(
-            """
-            SELECT id, topics_json, created_at FROM memories
-            WHERE status = 'active' AND id != ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (exclude_id, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """
-            SELECT id, topics_json, created_at FROM memories
-            WHERE status = 'active'
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-
-    ids = [r[0] for r in rows]
-    entities_by_id = entities_for_memories(conn, ids)
-
+def list_memory_signals_by_ids(conn: sqlite3.Connection, memory_ids: list[str]) -> list[MemorySignal]:
+    """特定のid集合(find_candidates_by_*で絞り込んだ結果)のMemory軽量メタデータを
+    まとめて取得する。"""
+    if not memory_ids:
+        return []
+    placeholders = ",".join("?" for _ in memory_ids)
+    rows = conn.execute(
+        f"SELECT id, topics_json, created_at FROM memories WHERE id IN ({placeholders})",
+        memory_ids,
+    ).fetchall()
+    entities_by_id = entities_for_memories(conn, [r[0] for r in rows])
     return [
-        MemorySignal(id=r[0], topics=_json.loads(r[1] or "[]"), created_at=r[2], entities=entities_by_id.get(r[0], []))
+        MemorySignal(id=r[0], topics=json.loads(r[1] or "[]"), created_at=r[2], entities=entities_by_id.get(r[0], []))
         for r in rows
     ]
+
+
+def find_candidates_by_topics(conn: sqlite3.Connection, topics: list[str], *, exclude_id: str | None = None, limit: int = 200) -> set[str]:
+    """topics_json(JSON配列)に、指定したtopicのいずれかが含まれるactiveなMemoryを探す。
+    直近N件のような件数ベースの打ち切りは行わず、条件に一致する限り古いMemoryも
+    対象になる(limitは念のための安全上限であり、"最近のものだけ"という意味の
+    絞り込みではない)。"""
+    if not topics:
+        return set()
+    placeholders = ",".join("?" for _ in topics)
+    exclude_clause = "AND m.id != ?" if exclude_id else ""
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT m.id
+        FROM memories m, json_each(m.topics_json)
+        WHERE json_each.value IN ({placeholders}) AND m.status = 'active' {exclude_clause}
+        ORDER BY m.created_at DESC
+        LIMIT ?
+        """,
+        [*topics, *([exclude_id] if exclude_id else []), limit],
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def find_candidates_by_entities(conn: sqlite3.Connection, entity_names: list[str], *, exclude_id: str | None = None, limit: int = 200) -> set[str]:
+    """指定したentity名のいずれかを持つactiveなMemoryを探す(直近N件への打ち切りなし)。"""
+    if not entity_names:
+        return set()
+    placeholders = ",".join("?" for _ in entity_names)
+    exclude_clause = "AND me.memory_id != ?" if exclude_id else ""
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT me.memory_id
+        FROM memory_entities me
+        JOIN entities e ON e.id = me.entity_id
+        JOIN memories m ON m.id = me.memory_id
+        WHERE e.name IN ({placeholders}) AND m.status = 'active' {exclude_clause}
+        ORDER BY m.created_at DESC
+        LIMIT ?
+        """,
+        [*entity_names, *([exclude_id] if exclude_id else []), limit],
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def find_candidates_by_time_range(conn: sqlite3.Connection, start_iso: str, end_iso: str, *, exclude_id: str | None = None, limit: int = 200) -> set[str]:
+    """created_atが[start_iso, end_iso]の範囲に入るactiveなMemoryを探す
+    (ISO8601文字列は同一フォーマットである限り辞書順比較が時系列順と一致するため、
+    BETWEENでの範囲検索がそのまま使える)。"""
+    exclude_clause = "AND id != ?" if exclude_id else ""
+    rows = conn.execute(
+        f"""
+        SELECT id FROM memories
+        WHERE status = 'active' AND created_at BETWEEN ? AND ? {exclude_clause}
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        [start_iso, end_iso, *([exclude_id] if exclude_id else []), limit],
+    ).fetchall()
+    return {r[0] for r in rows}
 
 
 def upsert_link(conn: sqlite3.Connection, *, source_memory_id: str, target_memory_id: str, relation_type: str, reason: str, created_at: str) -> None:
@@ -329,8 +396,6 @@ def links_for_memory(conn: sqlite3.Connection, memory_id: str) -> list[LinkRow]:
 
 
 def search(conn: sqlite3.Connection, query: str, *, limit: int = 20) -> list[SearchHit]:
-    import json as _json
-
     phrase = '"' + query.replace('"', '""') + '"'
     rows = conn.execute(
         """
@@ -350,8 +415,8 @@ def search(conn: sqlite3.Connection, query: str, *, limit: int = 20) -> list[Sea
     return [
         SearchHit(
             memory_id=r[0], title=r[1], content=r[2], type=r[3], event_date=r[4],
-            importance=r[5], confidence=r[6], status=r[7], topics=_json.loads(r[8] or "[]"),
-            entities=entities_by_id.get(r[0], []), rank=r[9],
+            importance=r[5], confidence=r[6], status=r[7], topics=json.loads(r[8] or "[]"),
+            entities=[e.name for e in entities_by_id.get(r[0], [])], rank=r[9],
         )
         for r in rows
     ]
