@@ -82,7 +82,7 @@ brain-twin-2/
 │  ├ pipeline.py          # add / process / reindex の実処理
 │  ├ search.py            # 簡易Hybrid Retrieval
 │  └ cli.py               # argparseによるコマンド定義
-├ tests/                  # pytest (89 tests)
+├ tests/                  # pytest (93 tests)
 ├ scripts/setup.ps1
 ├ vault/                  # 実際のVault(Git管理外、実行時に自動生成)
 └ data/                   # SQLite index(Git管理外)
@@ -338,10 +338,75 @@ Phase 2実装(コミット `6342152`)に対するレビューで5件の問題が
   作られたDBファイルもそのまま(reindex不要で)使い続けられる。データを破壊的に変更する
   マイグレーションは今回のスコープに含まれていない。
 
+## レビュー修正(3回目, 2026-08-24)
+
+2回目のレビュー修正(コミット `19b5030`)に対する3回目のレビューで、Phase 2の設計自体は
+合格としつつ、Phase 3へ進む前に2件の修正を求められた。
+
+1. **reconcileが現在のclassifierに依存していた問題**: 2回目の修正で実装した
+   `reconcile._repair_one()` は、不整合を見つけたraw_logについて
+   `classify.classify(raw_log.text)` を再実行し、「現在の」分類結果でMemory化対象
+   だったかどうかを判断していた。これは将来classifierの実装が変わった場合に
+   過去の処理結果を誤って再解釈してしまう(指示書25章: 過去に確定した処理結果は
+   Markdownが正本であり、現在の実装で再解釈しない、という原則に反する)。
+   具体的には、(a) 旧classifierがmemory-worthyと判定してMemory Markdownを書いた
+   直後にクラッシュした場合、新classifierがnot-memory-worthyだと既存のMemory
+   Markdownを復元し損なう、(b) 逆に旧classifierがnot-memory-worthyと判定して
+   正常にchat処理済みだったraw_logを、新classifierがmemory-worthyだと判定する
+   ようになると「Memoryが無い異常事態」と誤検出してReconcileErrorを出しうる、
+   という2方向の問題があった。
+   修正として、`reconcile.py`はclassifierを一切呼ばないように変更した。
+   raw_log_idから決定的に導出されるmemory_id(`ids.derive_memory_id`)で
+   `memory_io.find_existing()` を呼び、既存Memory Markdownが見つかればそれを
+   (現在のclassifierの判断に関係なく)無条件に正として復元する。見つからない
+   場合は、raw_log自身のfrontmatterに記録された`processing_outcome`
+   (当時の実際の処理結果。新設のメタデータ、後述)を見て判断する:
+   `"memory"`なのにMemoryが無ければ矛盾としてReconcileErrorを送出し、
+   `"chat"`、またはこのメタデータ自体を持たない旧形式のraw logであれば、
+   Memoryが無いことをそのまま正常(または安全側のフォールバック)として受け入れ、
+   ReconcileErrorにも新規Memory生成にもしない。
+   これに伴い、Raw Logのfrontmatterへ最小限の処理メタデータを追加した:
+   `processing_outcome`(`"memory"` | `"chat"`)と、Memory化された場合の
+   `memory_id`。`raw_log_io.mark_processed()` がMemory処理の結果と同時に書き込む。
+   Raw Log本文(body)は一切変更していない。**後方互換性**: 旧形式のraw log
+   (このフィールドが導入される前に処理されたもの)には存在しないため、
+   `read_raw_log()`は`.get()`でNoneにフォールバックする。呼び出し側
+   (`reconcile._repair_one`)もNoneを「chatと同様、安全側」として扱うため、
+   旧形式のraw logに対しても壊れずに動く。SQLite側のスキーマは変更していない
+   (このメタデータはMarkdownにのみ持たせ、SQLiteは引き続きMarkdownの写しのまま)。
+2. **reconcileがdaily_logsを復旧対象に含めていなかった問題**: 通常processでは
+   Daily Log MarkdownへのAppendがMemory処理より先に行われるため、
+   「Daily Markdown作成済み → Memory作成済み → Raw processed_at更新済み →
+   SQLite commit直前クラッシュ」という窓では、Daily Markdownは存在するのに
+   対応するSQLite `daily_logs` 行が存在しない状態になりうる(raw_logs/memoriesと
+   同じ種類の不整合)。`reconcile.py`に小さなヘルパー`_reconcile_daily_log()`を
+   追加し、`_repair_one()`から各raw_logの日付に対応するDaily Markdownの有無を
+   確認して、存在すれば`db.upsert_daily_log()`で復元するようにした(`reindex()`が
+   daily_logsを復元する際と同じ、ファイルの`updated_at`/`file_path`を使う方式)。
+   日付単位のupsertなので、同じ日に複数のraw_logが修復対象になっても冪等に動く。
+   `reconcile.py`を巨大化させないよう、この処理は独立した小さな関数に分離した。
+
+`test_process_all_reconcile_restores_existing_memory_even_if_classifier_now_disagrees`
+(必須テストA)と `test_process_all_reconcile_does_not_fabricate_memory_when_classifier_now_disagrees`
+(必須テストB)を`test_pipeline.py`に追加し、classifierを差し替えた状態でも
+reconcileが正しく動く(かつAではclassify.classify自体が一切呼ばれないことも
+明示的に確認する)ことを検証した。既存の12ステップreconcileテスト
+(`test_process_all_auto_reconciles_raw_log_processed_in_markdown_but_never_committed_to_sqlite`)
+はdaily_logsの復旧確認を含むよう拡張した。`test_reconcile.py`は、以前の
+「Markdown上processed_at済みなら常にReconcileError足りうる」という前提のテストを、
+新しい判断基準(Memory実在の有無・processing_outcome)に合わせて書き直した。
+
 ## 実施した検証
 
-- `pytest tests/` — **89件、すべてPASS**(1回目のレビュー修正時点の69件 + 今回の
-  新規20件。既存テストの削除・置き換えは無い)。
+- `pytest tests/` — **93件、すべてPASS**(2回目のレビュー修正時点の89件 + 今回の
+  新規4件。既存テストの削除・置き換えは無い。ただし`test_reconcile.py`の1件は、
+  reconcileの判断基準そのものが変わったことに伴い、同じ懸念を検証する新しい
+  アサーションに書き直した)。
+  - 新規4件の内訳: 分類ロジック変更をまたぐreconcileの復旧テスト2件(必須テストA/B、
+    `test_pipeline.py`)、`reconcile_processed_raw_logs()`単体でのフォールバック
+    振る舞いを確認する2件(`test_reconcile.py`)。
+  - 2回目のレビュー修正時点の89件は削除・置き換えなしでそのまま維持
+    (`test_reconcile.py`の1件のみ、上記の理由で新しい判断基準に合わせて書き直し)。
   - 新規20件の内訳: 候補探索の200件上限撤廃を201件規模で確認する2件
     (`test_db_entities_links.py`)、`vault.write_text_atomic`の原子性・Windows安全性・
     一時ファイル衝突回避を確認する6件(`test_vault.py`)、`find_existing`のVault全体
@@ -382,6 +447,11 @@ Phase 2実装(コミット `6342152`)に対するレビューで5件の問題が
 - Phase 1で作られた(reason列の無い)`links` テーブル、およびこのレビュー修正より前の
   (confidence/method列の無い)`memory_entities` テーブルを模したDBに対して実際に
   処理を実行し、どちらも自己修復(列追加)が機能してエラーにならないことを確認済み。
+- 3回目のレビュー修正後、`add`(Memory化される入力・chatになる入力の両方)→
+  `process` → `reindex` を実際にPython APIで実行し、Raw Logのfrontmatterへ
+  `processing_outcome`("memory"/"chat")と(該当する場合)`memory_id`が正しく
+  書き込まれること、SQLite `daily_logs` テーブルが正しく反映されることを実データで
+  確認した。
 - **Docker実機検証はしていません**(このプロジェクトはDockerを使わない設計)。
 - 実際のObsidianアプリでVaultを開いての目視確認は**未実施**です(このセッションの環境に
   Obsidianが無いため)。
@@ -403,6 +473,14 @@ Phase 2実装(コミット `6342152`)に対するレビューで5件の問題が
   `vault.write_text_atomic()`経由になった(以前は非atomicだった)。Raw LogはVault内で
   最も失ってはいけない原本であるため、書き込み途中のクラッシュに対する耐性を
   Memoryと同水準にした。
+- reconcile(自動修復)は3回目のレビュー修正で、現在のclassifierを再実行せず
+  Markdown(Memory実在の有無・raw_logのprocessing_outcome)だけで判断するように
+  変更した。ただしこれは「processing_outcomeが記録されていて、かつ実際にはMemory
+  Markdownが存在するのにprocessing_outcomeが"chat"のまま」というような、
+  Markdown自体が矛盾した状態(通常のクラッシュ・再試行では起こり得ない、手動編集等の
+  異常系)までは検出しない。Memoryが実在すれば常にそれを正として復元する設計のため、
+  この特定の矛盾は実害無く(Memory側が優先される)解消されるが、明示的な検出・警告は
+  行っていない。
 
 ## 今後(まだ実装していないもの)
 

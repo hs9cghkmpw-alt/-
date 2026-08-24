@@ -65,6 +65,14 @@ class RawLog:
     created_at: str  # ISO8601
     file_path: str  # vaultルートからの相対パス
     processed_at: str | None = None
+    # 過去に確定した処理結果を、現在のclassifierで再解釈せずに済むようにするための
+    # 最小限のメタデータ(3回目のレビュー対応)。"memory" | "chat" | None(このフィールド
+    # が導入される前に処理された旧形式のraw log。後方互換のため常にNoneを許容する)。
+    processing_outcome: str | None = None
+    # processing_outcome == "memory" のときに、対応するMemoryのid
+    # (ids.derive_memory_idで決定的に導出できる値と一致するはずだが、
+    # Markdown側にも明示的に残しておくことで再導出に依存しない)。
+    memory_id: str | None = None
 
 
 @dataclass

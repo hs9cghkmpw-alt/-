@@ -170,10 +170,14 @@ def process_all(config: Config) -> ProcessSummary:
                 summary.memories_created += 1
                 summary.memory_ids.append(memory.id)
                 summary.links_created += link_count
+                outcome = raw_log_io.PROCESSING_OUTCOME_MEMORY
+                outcome_memory_id = memory.id
             else:
                 summary.kept_as_chat += 1
+                outcome = raw_log_io.PROCESSING_OUTCOME_CHAT
+                outcome_memory_id = None
 
-            raw_log_io.mark_processed(config, raw_log)
+            raw_log_io.mark_processed(config, raw_log, processing_outcome=outcome, memory_id=outcome_memory_id)
             db.upsert_raw_log(
                 conn, id=raw_log.id, text=raw_log.text, source=raw_log.source,
                 created_at=raw_log.created_at, file_path=raw_log.file_path,

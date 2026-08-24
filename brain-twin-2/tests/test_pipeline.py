@@ -460,7 +460,7 @@ def test_process_all_auto_reconciles_raw_log_processed_in_markdown_but_never_com
 
     1. raw logを追加する
     2. processする(このテストでは意図的にクラッシュさせる)
-    3. Memory Markdownが書き込まれていることを確認する
+    3. Memory MarkdownおよびDaily Log Markdownが書き込まれていることを確認する
     4. Raw Logのprocessed_atがMarkdownへ書き込まれていることを確認する
     5. SQLiteへのconn.commit()の直前で例外が発生する(monkeypatchで再現)
     6. processが例外で終了する
@@ -468,7 +468,9 @@ def test_process_all_auto_reconciles_raw_log_processed_in_markdown_but_never_com
     8. 通常運用の一部として自動的に回復する(reconcileが自動実行される)
     9. Memoryがちょうど1件だけ存在する
     10. Raw Logがprocessed済みとして扱われている
-    11. SQLite側にMemory/Entity/Linkの行が正しく存在する
+    11. SQLite側にMemory/Entity/Link/daily_logsの行が正しく存在する
+        (3回目のレビュー対応: daily_logsもraw_logs/memoriesと同じクラッシュ窓で
+        失われうるため、reconcileの対象に含めた)
     12. MarkdownとSQLiteの内容が一致する
 
     本番コードに例外注入用のフックは加えない。sqlite3.Connection自体はイミュータブルな
@@ -522,9 +524,13 @@ def test_process_all_auto_reconciles_raw_log_processed_in_markdown_but_never_com
     assert len(memories_after_crash) == 1  # 3
     raw_logs_after_crash = raw_log_io.list_raw_logs(config)
     assert raw_logs_after_crash[0].processed_at is not None  # 4
+    date_str = datetime.fromisoformat(raw_logs_after_crash[0].created_at).strftime("%Y-%m-%d")
+    daily_path = config.daily_dir / f"{date_str}.md"
+    assert daily_path.exists()  # 3: Daily Log Markdownも書かれている
     with db.connect(config) as conn:
         assert db.get_raw_log_processed_at(conn, raw_logs_after_crash[0].id) is None  # 反映されていない
         assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM daily_logs WHERE date = ?", (date_str,)).fetchone()[0] == 0
 
     # 7: 「再起動後」を模して、もう一度process_allを呼ぶ(reconcileがこの中で自動的に走る)。
     summary = pipeline.process_all(config)  # 8
@@ -552,4 +558,143 @@ def test_process_all_auto_reconciles_raw_log_processed_in_markdown_but_never_com
                 "WHERE me.memory_id = ?", (memory.id,)
             ).fetchall()
         }
+        db_daily_log = conn.execute(
+            "SELECT date, file_path FROM daily_logs WHERE date = ?", (date_str,)
+        ).fetchone()
     assert db_entity_names == set(memory.entities)  # 12: MarkdownとSQLiteの内容が一致する
+
+    # 11: daily_logs行もreconcileで復元されている。file_pathはDaily Log Markdownの
+    # 実際の場所(vaultルートからの相対パス)と一致すること。
+    assert db_daily_log is not None
+    assert db_daily_log[0] == date_str
+    assert db_daily_log[1] == vault.relative_to_vault(daily_path, config)
+
+
+# ---- レビュー対応(3回目): reconcileは現在のclassifierに依存しない ----
+
+
+def test_process_all_reconcile_restores_existing_memory_even_if_classifier_now_disagrees(config, monkeypatch):
+    """必須テストA: 旧classifierがmemory-worthyと判定してMemory Markdownを書いた
+    直後にcommit前クラッシュした後、classifierが(将来のバージョン変更で)
+    not-memory-worthyに変わっていても、reconcileは現在のclassifierを一切再実行
+    せず、既に存在するMemory Markdownをそのまま正としてSQLiteへ復元することを
+    確認する。
+
+    1. 旧classifierでmemory-worthyと判定される入力をprocessする
+    2. Memory Markdownが生成される
+    3. SQLite commit直前でクラッシュする(fault injection)
+    4. classifierをnot-memory-worthyに差し替える(将来のバージョン変更を模擬。
+       差し替え後のclassify.classify自体が一切呼ばれないことも合わせて保証する)
+    5. 「再起動後の次回実行」を模してprocess_allをもう一度呼ぶ
+    6. その中でreconcileが自動的に走る
+    7. 既存のMemory MarkdownがSQLiteへ復元される
+    8. Memoryはちょうど1件だけ存在する(重複しない)
+    """
+    pipeline.add_capture(config, "十分に長い、分類変更をまたぐreconcileのテスト用の入力文です")
+
+    mark_processed_done = {"value": False}
+    real_mark_processed = raw_log_io.mark_processed
+
+    def spy_mark_processed(config_arg, raw_log_arg, **kwargs):
+        real_mark_processed(config_arg, raw_log_arg, **kwargs)  # 1・2: Markdownへの書き込み自体は成功させる
+        mark_processed_done["value"] = True
+
+    monkeypatch.setattr(raw_log_io, "mark_processed", spy_mark_processed)
+
+    crashed = {"value": False}
+
+    class _FlakyCommitConn:
+        def __init__(self, real_conn):
+            self._real_conn = real_conn
+
+        def commit(self):
+            if mark_processed_done["value"] and not crashed["value"]:
+                crashed["value"] = True
+                raise RuntimeError("simulated crash right before the SQLite commit for this process_all() run")
+            return self._real_conn.commit()
+
+        def __getattr__(self, name):
+            return getattr(self._real_conn, name)
+
+    real_connect = db.connect
+
+    @contextlib.contextmanager
+    def flaky_connect(config_arg):
+        with real_connect(config_arg) as real_conn:
+            yield _FlakyCommitConn(real_conn)
+
+    monkeypatch.setattr(db, "connect", flaky_connect)
+
+    with pytest.raises(RuntimeError):
+        pipeline.process_all(config)  # 3
+
+    memories_after_crash = memory_io.list_all_memories(config)
+    assert len(memories_after_crash) == 1  # 2
+    original_id = memories_after_crash[0].id
+    original_raw_log_id = raw_log_io.list_raw_logs(config)[0].id
+
+    # 4: classifierを差し替える。呼ばれたらテスト自体を失敗させることで、
+    # reconcileがclassifierを一切呼ばないことも合わせて保証する。
+    def classifier_must_not_be_called(text):
+        raise AssertionError("reconcile must not call classify.classify() -- it must trust Markdown instead")
+
+    monkeypatch.setattr(classify, "classify", classifier_must_not_be_called)
+
+    summary = pipeline.process_all(config)  # 5・6
+
+    assert original_raw_log_id in summary.reconciled_raw_log_ids
+    memories_after_recovery = memory_io.list_all_memories(config)
+    assert len(memories_after_recovery) == 1  # 8
+    assert memories_after_recovery[0].id == original_id  # 7
+
+    with db.connect(config) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 1
+
+
+def test_process_all_reconcile_does_not_fabricate_memory_when_classifier_now_disagrees(config, monkeypatch):
+    """必須テストB(Aの逆方向): 旧classifierがnot-memory-worthyと判定しchatとして
+    正常に処理済みになった(processing_outcome="chat"がMarkdownに記録される)後、
+    classifierが(将来のバージョン変更で)memory-worthyに変わっていても、
+    reconcileは「Memoryが存在しない異常事態」と誤検出してReconcileErrorを出したり、
+    存在しないMemoryを勝手に生成したりしないことを確認する。
+
+    1. 短い(かつキーワードに一致しない)入力を通常どおりprocessし、chatとして
+       処理済みにする
+    2. classifierをmemory-worthyに差し替える(将来のバージョン変更を模擬)
+    3. SQLite側のprocessed状態だけを人為的に消し、reconcile対象にする
+       (commit前クラッシュと同じ状態を直接再現する)
+    4. process_allを呼び、reconcileが動く
+    5. 存在しないMemoryを勝手に生成しない
+    6. ReconcileErrorにもならない(例外が起きないことそのものが確認になる)
+    7. Raw Logは正しくSQLiteへ復元される
+    """
+    pipeline.add_capture(config, "みじかい")  # 12文字未満・キーワード無し = chat扱い
+    summary = pipeline.process_all(config)  # 1
+    assert summary.memories_created == 0
+    assert summary.kept_as_chat == 1
+    assert memory_io.list_all_memories(config) == []
+
+    raw_log = raw_log_io.list_raw_logs(config)[0]
+    assert raw_log.processing_outcome == raw_log_io.PROCESSING_OUTCOME_CHAT
+
+    # 3: SQLite側のprocessed状態だけを失わせる(commit前クラッシュ相当)。
+    with db.connect(config) as conn:
+        conn.execute("UPDATE raw_logs SET processed_at = NULL WHERE id = ?", (raw_log.id,))
+        conn.commit()
+
+    # 2: classifierを差し替える。
+    real_classify = classify.classify
+
+    def always_memory_worthy(text):
+        return dataclasses.replace(real_classify(text), is_memory_worthy=True, type=MemoryType.THOUGHT)
+
+    monkeypatch.setattr(classify, "classify", always_memory_worthy)
+
+    summary2 = pipeline.process_all(config)  # 4
+
+    assert raw_log.id in summary2.reconciled_raw_log_ids
+    assert memory_io.list_all_memories(config) == []  # 5
+
+    with db.connect(config) as conn:
+        assert db.get_raw_log_processed_at(conn, raw_log.id) == raw_log.processed_at  # 7
+        assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 0
