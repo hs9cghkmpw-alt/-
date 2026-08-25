@@ -45,7 +45,7 @@ outgoing/incoming、inactive除外、1-hop、決定的順序は維持する。
 
 ## Next authorized task
 
-**Vector Search design review pending.**
+**Vector Search design review fixes implemented; external review pending.**
 
 Do **not** begin Vector Search implementation until this design is reviewed and explicitly approved.
 LLM integration, `ask`, Contradiction Detection, Memory Consolidation, and smartphone integration remain out of scope.

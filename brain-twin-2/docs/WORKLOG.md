@@ -53,3 +53,15 @@ Rules:
 - Commit: this commit
 - Known issues: 設計文書の未解決事項はレビュー待ち。
 - Next: **Vector Search design review pending**。
+
+## 2026-08-25 — Codex — Vector Search design review fixes
+
+- Branch: `brain-twin-dev`
+- Base: `ceaf20db895554c8b223829a5f2ebca1b0651529`
+- Scope: Vector Search設計の4レビュー指摘のみ修正。アプリケーション実装・sqlite-vec導入は行わない。
+- Changed: user configをEmbedding構成の正本にし、profile/backend schemaを分離。revision非公開時のprofile_epochを必須化し、Hybridをpure lexical/vector → RRF → metadata 1回に明確化。
+- Tests: application code unchanged; documentation diff checks only.
+- CI: push後に確認予定。
+- Commit: this commit
+- Known issues: 外部設計レビュー待ち。GO/完了判断は未実施。
+- Next: **Vector Search design review fixes implemented; external review pending**。

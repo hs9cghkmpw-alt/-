@@ -13,7 +13,8 @@ Associative Retrievalを壊さず、意味的に近いMemoryをPrimary候補へ�
 守る境界は次のとおり。
 
 - Markdown/VaultがMemoryのSource of Truth。
-- embedding、vector index、model metadataはすべて削除可能な派生cache。
+- Embedding構成のSource of TruthはSQLite外の明示的なuser config。
+- embedding、vector index、SQLite内のprofile/state写しはすべて削除可能な派生cache。
 - embedding都合のfieldをMemory Markdownへ追加しない。
 - Raw Log、Daily Logはembedding対象にせず、原文も変更しない。
 - Embedding ProviderはLLM Providerと別interfaceにする。
@@ -51,6 +52,26 @@ query
 重要なのは「embedding生成」と「近傍検索backend」を分離すること。モデル交換は
 Embedding Provider/profileの問題であり、sqlite-vec交換はVectorIndexBackendの問題である。
 
+### 3層のSource of Truth
+
+| 層 | Source of Truth | 内容 |
+|---|---|---|
+| Memory | Markdown/Vault | title、content、type等のMemory本体 |
+| Embedding configuration | Git管理外のuser config file | provider、model、immutable revisionまたはgeneration key、dimension、normalized、document template version、backend等の非秘密設定 |
+| Derived cache | SQLite | metadata/FTS、embedding profileの写し、embedding vector、vector index、build状態 |
+
+user configの既定path案はWindowsで`%APPDATA%\BrainTwin\config.toml`、Linuxで
+`$XDG_CONFIG_HOME/brain-twin/config.toml`（未設定時`~/.config/brain-twin/config.toml`）、
+macOSで`~/Library/Application Support/BrainTwin/config.toml`とする。`BRAIN_TWIN_CONFIG`で
+明示pathを上書き可能にする。projectの`data/`配下には置かない。data directoryと一緒に
+消去されると構成まで失うためである。path解決は小さな標準ライブラリ実装を第一候補とし、
+この目的だけで依存を増やさない。
+
+config fileへ保存してよいのは非秘密設定だけとする。API key/token/passwordは保存せず、
+環境変数、OS credential store、またはprovider SDKの安全な認証機構から実行時に取得する。
+configには秘密値そのものではなく、必要なら`credential_source = "environment"`のような
+取得方式だけを書く。権限を絞っても平文secret保存を許可しない。
+
 ## 3. Embedding Provider Interface
 
 `brain_twin/embedding_provider.py`に、特定SDKをimportしないProtocolと値型を置く。
@@ -60,7 +81,9 @@ Embedding Provider/profileの問題であり、sqlite-vec交換はVectorIndexBac
 class EmbeddingProfile:
     provider_id: str       # 例: sentence_transformers / openai / ollama
     model_name: str
-    model_revision: str    # remote APIも固定可能な値。未知なら明示的に"unknown"
+    model_revision: str | None  # providerが保証するimmutable revision
+    profile_epoch: str | None   # revision非公開時にuser configで明示する世代key
+    embedding_contract_version: int
     dimension: int
     normalized: bool
     document_template_version: int
@@ -83,8 +106,18 @@ class EmbeddingProvider(Protocol):
   rollbackしない。
 - API keyやmodel cache pathをDB/Markdownへ保存しない。
 
-`profile_fingerprint`は上記profileの安定JSONをSHA-256化する。provider名だけでなく
-revision、dimension、normalization、document templateも含める。
+production profileは、providerが保証するimmutableな`model_revision`、またはuser configで
+明示する非空の`profile_epoch`を必須とする。`model_revision="unknown"`だけのproduction起動は
+configuration errorにして、silent staleを許さない。revisionを公開しないremote providerでは、
+利用者が`profile_epoch`（例:`2026-08-provider-refresh-1`）を更新することで意図的に全再生成する。
+さらにprovider adapterやquery/document prompt、前処理契約が変わる場合は
+`embedding_contract_version`を実装側で上げる。
+
+`profile_fingerprint`はprofileの安定JSONをSHA-256化する。provider/model、immutable revision
+またはprofile_epoch、dimension、normalization、document template version、
+embedding contract versionを含める。Vector backendは含めない。同じembeddingを
+ExactScanBackendとSqliteVecBackendのどちらでも利用できるためである。test専用fakeだけは
+明示的な固定generation keyを使え、production validationを暗黙に迂回しない。
 
 ### Canonical embedding document
 
@@ -114,7 +147,8 @@ type/topics/entities/links/statusは含めない。検索ranking用metadataや�
 推奨は、**SQLiteの通常tableをembedding cacheの管理面、sqlite-vecを検索面**とする。
 sqlite-vecだけを唯一の保存先にせず、profile/hash/生成状態を通常tableで検査可能にする。
 ただしvector値の二重永続化は避け、採用backendがsqlite-vecならvector本体は`vec0`、
-ExactScanBackendなら`memory_embeddings.embedding_blob`を使う。backendはDB metadataへ記録する。
+ExactScanBackendなら`memory_embeddings.embedding_blob`を使う。active backendはuser configが
+正本であり、SQLiteにはbuild済みbackend状態の派生写しだけを記録する。
 
 sqlite-vec公式資料ではPyPI導入とWindows対応が案内されている一方、loadable extensionと
 Python同梱SQLiteの互換性は環境依存である。そのためSprint 1にWindows 11 + projectの
@@ -133,7 +167,8 @@ CREATE TABLE embedding_profiles (
     dimension INTEGER NOT NULL CHECK (dimension > 0),
     normalized INTEGER NOT NULL CHECK (normalized IN (0, 1)),
     document_template_version INTEGER NOT NULL,
-    backend TEXT NOT NULL,
+    embedding_contract_version INTEGER NOT NULL,
+    profile_epoch TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -150,13 +185,27 @@ CREATE TABLE memory_embeddings (
 CREATE INDEX idx_memory_embeddings_profile
 ON memory_embeddings(profile_fingerprint);
 
-CREATE TABLE embedding_state (
+CREATE TABLE active_embedding_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    active_profile_fingerprint TEXT REFERENCES embedding_profiles(fingerprint),
+    active_profile_fingerprint TEXT REFERENCES embedding_profiles(fingerprint)
+);
+
+CREATE TABLE vector_backend_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     backend TEXT NOT NULL,
-    backend_schema_version INTEGER NOT NULL
+    backend_schema_version INTEGER NOT NULL,
+    indexed_profile_fingerprint TEXT REFERENCES embedding_profiles(fingerprint),
+    build_status TEXT NOT NULL,
+    built_at TEXT
 );
 ```
+
+`embedding_profiles`はembeddingの意味と生成契約だけを表し、backend列を持たない。
+`active_embedding_state`はuser configから選ばれたprofileの派生写し、
+`vector_backend_state`は同じembedding profileをどのbackend/schemaでindex化したかを表す。
+ExactScanからsqlite-vecへ切り替えてもprofile fingerprintと既存embeddingの意味は変わらず、
+vector indexだけを再構築する。SQLite内stateとuser configが食い違う場合はuser configを正として
+stale扱いにし、暗黙にSQLiteの値をconfigへ書き戻さない。
 
 sqlite-vec tableはdimensionをDDLへ埋める必要があるため、active profile変更時に
 `memory_vector_index`をdrop/recreateする。正確な`vec0` DDLとtext primary key対応は
@@ -168,25 +217,28 @@ index overheadを容量見積りへ使う。SQLite DB全体が消えてもMarkdo
 
 ## 6. Invalidationとmigration
 
-embeddingが有効なのは次がすべて一致するときだけ。
+embedding cacheが有効なのは次がすべて一致するときだけ。
 
 1. `memory_id`
 2. active `profile_fingerprint`
 3. 現在のcanonical document `content_hash`
-4. backend schema version
+
+vector indexが有効なのは、さらにuser configのbackend、backend schema version、
+`indexed_profile_fingerprint`、`build_status='ready'`が一致するときだけである。
 
 | 変化 | 動作 |
 |---|---|
 | title/content変更 | hash不一致のMemoryだけstale。再生成までvector channelから除外 |
-| model/revision変更 | 新fingerprint。旧行を検索に使わず、新profileをbatch生成 |
+| model/revision/profile_epoch/contract変更 | 新fingerprint。旧行を検索に使わず、新profileをbatch生成 |
 | dimension/normalization/template変更 | 新fingerprint。vector tableをstaging再構築 |
 | Memory inactive/archive | vectorは残っても検索時に`memories.status='active'`で除外。cleanup可能 |
 | Memory削除 | FK cascade + backend delete |
 | vector cache破損/欠落 | lexicalは継続。`embeddings rebuild`で再生成 |
 
 既存DBは`CREATE TABLE IF NOT EXISTS`で非破壊追加する。既存Memory Markdownは変更しない。
-legacy DBにはactive profileがないためVector機能をdisabledとみなし、起動時にmodel downloadや
-全件embeddingを暗黙実行しない。profile切替はstaging profile/indexを完成させてから
+legacy DBにはactive profileがないため、user configがなければVector機能をdisabledとみなし、
+起動時にmodel downloadや全件embeddingを暗黙実行しない。user configがあればSQLite stateを
+そこから派生構築する。profile切替はstaging profile/indexを完成させてから
 短いtransactionでactive pointerを切替え、途中失敗時は旧profileを維持する。
 
 ## 7. APIとmodule構成案
@@ -194,6 +246,7 @@ legacy DBにはactive profileがないためVector機能をdisabledとみなし�
 ```text
 brain_twin/
   embedding_provider.py   # Protocol、profile、typed errors（SDK非依存）
+  embedding_config.py     # user config path/read/validation（秘密値は扱わない）
   embedding_document.py   # canonical document + content hash
   embedding_service.py    # batching、validation、retry、sync/rebuild orchestration
   vector_index.py         # VectorIndexBackend Protocol、result型
@@ -235,8 +288,16 @@ final = fusion * metadata_multiplier(importance, confidence, recency)
 - 初期値案: lexical 0.6、vector 0.4、`rrf_k=60`。値は`RetrievalWeights`一箇所へ集約。
 - 各channelは`limit * candidate_multiplier`（初期3、上限あり）を取得してmemory_idでunion。
 - channelに不在ならその項は0。exact scoreは説明/diagnostic用に保持する。
-- metadata multiplierは現行式を共通関数へ抽出する実装案。ただし既存`search()`の結果を変えない
-  characterization testを先に置く。
+- Hybrid lexical channelは`search.search()`を呼ばない。DB層のpure BM25候補API
+  （新設`db.search_lexical_candidates()`を第一候補。現`db.search()`を流用する場合も
+  「metadata未適用」のcontractを明示）からlexical relevance rankを得る。
+- vector channelもcosine/distanceだけのpure relevance rankとする。両方をRRFした後に、
+  `metadata_multiplier(importance, confidence, recency)`を**1回だけ**適用する。
+- 現行`search.search()`はBM25へmetadataを既に適用した後方互換APIなので、Hybrid channelへ
+  その順位を渡して再度metadataを掛けることを禁止する。
+- 実装では現行metadata式を共通helperへ抽出できるが、その前に固定clockを使った
+  characterization testを追加し、既存`search()`の各scoreと最終orderが完全一致することを
+  証明する。refactor後も既存APIはpure lexical DB候補 + helperを内部利用して同じ結果を返す。
 - 同点はbest channel rank、event_date、memory_id等の明示的keyで決定的にする。
 - weight tuningは固定fixtureと実Vaultから匿名化した評価queryで行い、コード各所へ散らさない。
 
@@ -274,12 +335,29 @@ Relatedからvector検索したり2-hop展開したりしない。Link strength�
 
 query embeddingは短TTLのprocess内LRUを任意採用できるが、query本文を永続DBへ保存しない。
 
+### SQLite/vector cache全削除からの完全復旧
+
+1. OS user config領域（または`BRAIN_TWIN_CONFIG`）から非秘密Embedding構成を読む。
+2. config schemaを検証する。immutable revisionまたはprofile_epoch、dimension、backend等が
+   不足/不正なら、MarkdownやSQLiteを書き換えず明確に停止する。
+3. credentialは環境変数/OS credential store等から別途解決する。user configへsecretは書かない。
+4. VaultのMarkdownから既存reindexでMemory metadata/FTS/entities/linksを再構築する。
+5. configからEmbeddingProfileとfingerprintを再作成し、SQLite profile/stateの派生写しを作る。
+6. canonical embedding document/hashをMarkdown由来Memoryからbatch生成する。
+7. Embedding Providerでstale/missing全件を再embeddingし、派生cacheへ保存する。
+8. configで選択したVectorIndexBackendのstaging indexを全件から再構築する。
+9. 件数、dimension、profile fingerprintを検証後、active profile/backend stateをreadyへ切り替える。
+10. Hybrid/Vector searchを有効化する。途中失敗時もMarkdownとuser configは不変で、lexical searchは使える。
+
+したがって、SQLiteはuserが選んだ構成を決める場所ではない。SQLite全削除後も、user configと
+Markdownの2つからembedding/vectorを同じ契約で再生成できる。
+
 ## 10. Reindex flow
 
 既存`python brain.py reindex`がprovider/network不調で失敗する後方非互換を避ける。
 
 1. `reindex`は従来どおりMarkdownからmetadata/FTS/entities/linksを完全再構築。
-2. vector cacheは失われても正常。active profile設定だけ復元/再設定可能にする。
+2. vector cacheは失われても正常。active profile/backendはSQLiteからではなくuser configから復元する。
 3. `python brain.py embeddings rebuild`または
    `python brain.py reindex --embeddings`を明示した場合だけ、Markdown由来Memoryをbatch embeddingし
    vector indexをstaging構築する。
@@ -314,6 +392,8 @@ query embeddingは短TTLのprocess内LRUを任意採用できるが、query本�
 - Markdownにembeddingを書かない。
 - title/content変更だけstale、metadata-only変更はversion 1では再生成しない。
 - model/revision/dimension/template変更で旧vectorを検索しない。
+- revision非公開providerでprofile_epoch変更により全再生成し、`unknown`単独を拒否する。
+- SQLite全削除後、user config + Markdownだけで同じprofile/backendを再構築する。
 - legacy DBの非破壊migration、cache全削除から再生成。
 - inactive/deleted Memory除外、profile切替途中のrollback。
 
@@ -326,8 +406,9 @@ query embeddingは短TTLのprocess内LRUを任意採用できるが、query本�
 ### ranking/retrieval
 
 - lexical-only、vector-only、両方hit、重複dedupe、決定的tie。
-- RRF weightとmetadata multiplierのcharacterization。
-- 既存`search()`結果が完全一致。
+- pure BM25 rankとpure vector rankをRRFし、metadata helperの呼出しが候補ごとに1回だけ。
+- Hybridが`search.search()`ではなくpure DB lexical candidate APIを使うcontract test。
+- metadata helper抽出前後で既存`search()`のscore/orderが完全一致するcharacterization test。
 - hybrid Primary後もoutgoing/incoming、Related dedupe、inactive、1-hop、limitを維持。
 - top N確定前に全Memory本文をロードしない。
 
@@ -349,6 +430,8 @@ query embeddingは短TTLのprocess内LRUを任意採用できるが、query本�
 - model filesはVault/Git外のmodel cacheへ置き、初回downloadを暗黙実行しない。事前取得、
   offline mode、CPU device、batch sizeを設定可能にする。
 - remoteからlocalへ変更するとprofile fingerprintが変わるだけで、DB/retrieval APIは同じ。
+- providerがimmutable revisionを公開しない場合、user configのprofile_epoch更新を必須の
+  世代切替手段とし、`unknown`のまま継続しない。
 - 日本語/英語混在の実データ評価後にmodelを選ぶ。特定model名を設計段階で固定しない。
 
 ## 14. Sprint分割案
@@ -356,6 +439,7 @@ query embeddingは短TTLのprocess内LRUを任意採用できるが、query本�
 ### Sprint 4A — contracts and Windows storage spike
 
 - provider/backend Protocol、fake provider、canonical document/hash。
+- OS user config Source of Truth、generation key validation、SQLite全削除復旧flow。
 - schema migration案をtest DBで実証。
 - sqlite-vecのWindows install/load/CRUD/KNN/rebuild benchmark。
 - Gate: sqlite-vec採用確定、またはExactScanを初期backendに切替。
@@ -382,7 +466,7 @@ query embeddingは短TTLのprocess内LRUを任意採用できるが、query本�
 
 1. Windows spikeでpinするPython/sqlite-vec/SQLite version。
 2. 初期production embedding providerと日本語評価dataset/query。
-3. 初期modelのdimension、license、model revision固定方法、download容量。
+3. 初期modelのdimension、license、immutable revision/profile_epoch運用、download容量。
 4. sqlite-vecを必須dependencyにするかoptional extraにするか。
 5. ExactScanBackendを何件まで許可するか。
 6. lexical/vector初期weightとRRF candidate overfetch値。
