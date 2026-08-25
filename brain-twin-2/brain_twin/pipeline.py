@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from brain_twin import classify, db, linking, memory_io, memory_persistence, raw_log_io, reconcile, vault
+from brain_twin import classify, db, ids, linking, memory_io, memory_persistence, raw_log_io, reconcile, vault
 from brain_twin.config import Config
 from brain_twin.models import ExtractedEntity, Memory, RawLog
 
@@ -106,22 +106,37 @@ def _process_one(config: Config, conn: sqlite3.Connection, raw_log: RawLog) -> t
 
     Memory IDはraw_log_idから決定的に導出される(ids.derive_memory_id)ため、
     このraw_logに対応するMemoryファイルが既に存在する場合(前回のprocessがMemory
-    書き込み後・SQLite反映前にクラッシュしたケース)は、それを正としてそのまま再利用し、
-    新しいMemoryを作らない(二重生成防止。過去のレビュー指摘、最優先の修正項目)。
-    このとき、links/entitiesもファイルに書かれている内容をそのまま使い、
-    再計算はしない(再計算すると、クラッシュ前後で候補となる他のMemoryの状況が
-    変わっている可能性があり、結果が変わって一貫性が崩れうるため)。
-    """
-    result = classify.classify(raw_log.text)
-    if not result.is_memory_worthy:
-        return None, 0
+    書き込み後・SQLite反映/raw_log processed前にクラッシュしたケース)は、それを
+    正としてそのまま再利用し、新しいMemoryを作らない(二重生成防止。過去のレビュー
+    指摘、最優先の修正項目)。このとき、links/entitiesもファイルに書かれている
+    内容をそのまま使い、再計算はしない(再計算すると、クラッシュ前後で候補となる
+    他のMemoryの状況が変わっている可能性があり、結果が変わって一貫性が崩れうる
+    ため)。
 
-    memory = memory_io.build_memory(raw_log, result)
-    existing = memory_io.find_existing(config, memory.id)
+    【4回目のレビュー対応・Phase 2最後の修正】既存Memoryの有無は、classifierを実行する**前**に
+    確認する。以前はclassify.classify()を先に呼び、not is_memory_worthyなら
+    既存Memoryの確認すらせずreturnしていた。これだと次のクラッシュ復旧シナリオで
+    MarkdownとSQLite/processing_outcomeが矛盾する: (1)旧classifierが
+    memory-worthyと判定してMemory Markdownを書いた直後、raw_logのmark_processed
+    より前にクラッシュする(raw_logはまだunprocessedのまま)、(2)classifierが
+    更新されnot-memory-worthyになる、(3)同じraw_logを再processすると、
+    新classifierの判定だけでchatとして処理済みになってしまい、既に存在する
+    Memory Markdownが見捨てられる(SQLiteにも反映されず、processing_outcomeは
+    "chat"なのにMemory Markdownは実在する、という矛盾状態が生まれる)。
+    reconcile.pyと同じ原則(過去に確定したMarkdownを現在のclassifierで再解釈
+    しない)を、unprocessedなraw_logの通常処理経路にも適用し、既存Memoryが
+    見つかった場合はclassifierを一切呼ばない。"""
+    memory_id = ids.derive_memory_id(raw_log.id)
+    existing = memory_io.find_existing(config, memory_id)
 
     if existing is not None:
         memory = existing
     else:
+        result = classify.classify(raw_log.text)
+        if not result.is_memory_worthy:
+            return None, 0
+
+        memory = memory_io.build_memory(raw_log, result)
         suggestions = _suggest_links(conn, result.topics, result.entities, memory.created_at)
         _apply_link_suggestions(memory, suggestions, datetime.now().astimezone().isoformat())
         memory = memory_io.write_memory(config, memory)

@@ -82,7 +82,7 @@ brain-twin-2/
 │  ├ pipeline.py          # add / process / reindex の実処理
 │  ├ search.py            # 簡易Hybrid Retrieval
 │  └ cli.py               # argparseによるコマンド定義
-├ tests/                  # pytest (93 tests)
+├ tests/                  # pytest (94 tests)
 ├ scripts/setup.ps1
 ├ vault/                  # 実際のVault(Git管理外、実行時に自動生成)
 └ data/                   # SQLite index(Git管理外)
@@ -396,12 +396,45 @@ reconcileが正しく動く(かつAではclassify.classify自体が一切呼ば�
 「Markdown上processed_at済みなら常にReconcileError足りうる」という前提のテストを、
 新しい判断基準(Memory実在の有無・processing_outcome)に合わせて書き直した。
 
+## レビュー修正(4回目, 2026-08-25。Phase 2最後の修正)
+
+`pipeline._process_one()` が、未処理のraw_logを処理する際に「既存Memoryの有無の
+確認」より先に `classify.classify()` を実行していた問題を修正した(Phase 2の
+最後のレビュー指摘)。
+
+以前の順序では、not is_memory_worthyの場合に既存Memoryの確認すら行わずreturnして
+いたため、次のクラッシュ復旧シナリオでMarkdownと処理結果が矛盾しえた: 旧classifier
+がmemory-worthyと判定してMemory Markdownを書いた直後、raw_logのmark_processedより
+前にクラッシュする(raw_logはまだunprocessed) → classifierが更新される →
+同じraw_logを再processすると、新classifierの判定だけでchatとして処理済みになり、
+既に存在するMemory Markdownが見捨てられる(SQLiteには反映されず、
+processing_outcome="chat"なのにMemory Markdownは実在する、という矛盾状態が
+生まれる)。
+
+**不変条件**: raw_log_idから決定的に導出されるmemory_id
+(`ids.derive_memory_id`)でMemory Markdownが既に存在する場合、`_process_one()`は
+classifierを一切呼ばず、既存Markdownを常に正として再利用する。classifierが呼ばれる
+のは、対応するMemory Markdownがまだ存在しない場合に限る。これはreconcile.pyが
+3回目の修正で採用したのと同じ原則(過去に確定したMarkdownを現在のclassifierで
+再解釈しない)を、通常のprocess経路にも一貫して適用したもの。
+
+必須テスト`test_process_all_does_not_downgrade_existing_memory_to_chat_when_classifier_changes`
+(`test_pipeline.py`)を追加し、上記のクラッシュ復旧シナリオを再現した上で、
+classifierが差し替えられても既存Memoryが再利用され、かつ`classify.classify()`
+自体が一切呼ばれないこと(呼ばれたらテスト自体を失敗させる実装で保証)、
+Markdown/Raw Log/SQLiteの内容が一致すること、`reindex`後も状態が変わらないことを
+確認している。
+
 ## 実施した検証
 
-- `pytest tests/` — **93件、すべてPASS**(2回目のレビュー修正時点の89件 + 今回の
-  新規4件。既存テストの削除・置き換えは無い。ただし`test_reconcile.py`の1件は、
-  reconcileの判断基準そのものが変わったことに伴い、同じ懸念を検証する新しい
-  アサーションに書き直した)。
+- `pytest tests/` — **94件、すべてPASS**(3回目のレビュー修正時点の93件 +
+  今回(4回目)の新規1件
+  `test_process_all_does_not_downgrade_existing_memory_to_chat_when_classifier_changes`。
+  既存テストの削除・置き換えは無い)。
+  - 3回目のレビュー修正時点の93件(2回目のレビュー修正時点の89件 + 3回目の
+    新規4件。既存テストの削除・置き換えは無い。ただし`test_reconcile.py`の1件は、
+    reconcileの判断基準そのものが変わったことに伴い、同じ懸念を検証する新しい
+    アサーションに書き直した)は、そのまま維持。
   - 新規4件の内訳: 分類ロジック変更をまたぐreconcileの復旧テスト2件(必須テストA/B、
     `test_pipeline.py`)、`reconcile_processed_raw_logs()`単体でのフォールバック
     振る舞いを確認する2件(`test_reconcile.py`)。

@@ -698,3 +698,90 @@ def test_process_all_reconcile_does_not_fabricate_memory_when_classifier_now_dis
     with db.connect(config) as conn:
         assert db.get_raw_log_processed_at(conn, raw_log.id) == raw_log.processed_at  # 7
         assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 0
+
+
+# ---- レビュー対応(4回目・Phase 2最後の修正): _process_one()も既存Memoryの確認を
+# ---- classifier実行より先に行う(reconcileと同じ原則) ----
+
+
+def test_process_all_does_not_downgrade_existing_memory_to_chat_when_classifier_changes(config, monkeypatch):
+    """_process_one()が以前classify.classify()を既存Memory確認より先に実行して
+    いたために起きうる矛盾を再現し、修正後は起きないことを確認する。
+
+    1. raw logを追加する(十分に長く、実classifierがmemory-worthyと判定する入力)
+    2. classifierはこの時点では実物のまま(memory-worthyに"固定"されている)
+    3. processを開始する
+    4. Memory Markdown作成後、Raw Logのmark_processed前に意図的にクラッシュさせる
+       (db.upsert_memoryを1回だけ失敗させるfault injection)
+    5. Memory Markdownが1件存在することを確認する
+    6. Raw Logがまだprocessed_at=Noneであることを確認する
+    7. classifierをnot-memory-worthyに差し替える(将来のバージョン変更を模擬)。
+       既存Memoryがある場合に呼ばれたらテスト自体を失敗させる実装にすることで、
+       「classifierが呼ばれないこと」自体を保証する
+    8. process_allを再実行する
+    9. 8の中で新classifierが既存Memoryに対して呼ばれていないこと(7のガードで保証)
+    10. Memory Markdownが1件のみであること
+    11. Raw Logのprocessing_outcomeが"memory"であること
+    12. Raw Logのmemory_idが既存Memory IDと一致すること
+    13. SQLiteにMemoryが1件存在すること
+    14. Markdown/Raw Log/SQLiteが同じ処理結果を示すこと
+    15. reindex後も状態が変わらないこと
+    """
+    pipeline.add_capture(config, "十分に長い、classifier変更にまたがるクラッシュのテスト用の入力文です")  # 1
+
+    real_upsert_memory = db.upsert_memory
+    call_state = {"count": 0}
+
+    def flaky_upsert_memory(conn, **kwargs):
+        call_state["count"] += 1
+        if call_state["count"] == 1:
+            raise RuntimeError("simulated crash right after the memory markdown file was written")
+        return real_upsert_memory(conn, **kwargs)
+
+    monkeypatch.setattr(db, "upsert_memory", flaky_upsert_memory)
+
+    with pytest.raises(RuntimeError):
+        pipeline.process_all(config)  # 3・4
+
+    memories_after_crash = memory_io.list_all_memories(config)
+    assert len(memories_after_crash) == 1  # 5
+    original_id = memories_after_crash[0].id
+
+    raw_logs_after_crash = raw_log_io.list_raw_logs(config)
+    assert raw_logs_after_crash[0].processed_at is None  # 6
+
+    def classifier_must_not_be_called(text):
+        raise AssertionError(
+            "classify.classify() must not be called for a raw_log whose Memory "
+            "Markdown already exists -- existing Markdown takes priority over "
+            "re-classification."
+        )
+
+    monkeypatch.setattr(classify, "classify", classifier_must_not_be_called)  # 7
+
+    summary = pipeline.process_all(config)  # 8・9(9はAssertionErrorが起きないことで保証される)
+
+    memories_after_retry = memory_io.list_all_memories(config)
+    assert len(memories_after_retry) == 1  # 10
+    assert memories_after_retry[0].id == original_id
+    assert summary.memories_created == 1
+
+    raw_logs_after_retry = raw_log_io.list_raw_logs(config)
+    assert raw_logs_after_retry[0].processed_at is not None
+    assert raw_logs_after_retry[0].processing_outcome == raw_log_io.PROCESSING_OUTCOME_MEMORY  # 11
+    assert raw_logs_after_retry[0].memory_id == original_id  # 12
+
+    with db.connect(config) as conn:
+        db_memory_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        db_memory = conn.execute("SELECT id, content FROM memories").fetchone()
+    assert db_memory_count == 1  # 13
+    assert db_memory[0] == original_id
+    assert db_memory[1] == memories_after_retry[0].content  # 14: Markdown/SQLiteの内容が一致
+
+    counts = pipeline.reindex(config)  # 15
+    assert counts["memories"] == 1
+    memories_after_reindex = memory_io.list_all_memories(config)
+    assert len(memories_after_reindex) == 1
+    assert memories_after_reindex[0].id == original_id
+    with db.connect(config) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 1
