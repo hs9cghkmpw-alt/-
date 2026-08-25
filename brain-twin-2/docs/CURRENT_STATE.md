@@ -45,9 +45,10 @@ outgoing/incoming、inactive除外、1-hop、決定的順序は維持する。
 
 ## Next authorized task
 
-**Phase 3 Retrievalは完了。次の明示的な実装指示でVector Searchへ進む。**
+**Vector Search design review pending.**
 
-Do **not** begin Vector Search, LLM integration, `ask`, Contradiction Detection, Memory Consolidation, or smartphone integration until these two fixes are reviewed and Phase 3 is explicitly marked complete.
+Do **not** begin Vector Search implementation until this design is reviewed and explicitly approved.
+LLM integration, `ask`, Contradiction Detection, Memory Consolidation, and smartphone integration remain out of scope.
 
 ## Core invariants
 
