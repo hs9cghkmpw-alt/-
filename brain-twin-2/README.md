@@ -95,6 +95,29 @@ python brain.py timeline
 Vaultは既定で `brain-twin-2/vault/` に作成されます。**Obsidianでこのフォルダを開くと**、
 Daily Log・Memory・メタデータ(frontmatter)を人間が普通に閲覧できます。
 
+### Sprint 4C: Vector / Hybrid Primary Search(外部レビュー待ち)
+
+`search` に `--vector` / `--hybrid` を付けると、通常のFTS5 lexical検索の代わりに
+Vector Primary SearchまたはHybrid Primary Search(lexical + vectorのWeighted
+Reciprocal Rank Fusion)を使う。両者は互いに排他(argparseレベルで拒否)で、
+`--related`(Sprint 3のAssociative Retrieval)との併用もまだ明確な未対応errorになる
+(Associative Retrievalとの統合はSprint 4D予定)。
+
+```bash
+python brain.py search "Brain Twin" --vector
+python brain.py search "Brain Twin" --hybrid
+python brain.py search "Brain Twin" --hybrid --verbose  # fusion/metadata_multiplier等の内訳も表示
+```
+
+Vector系検索は、user configで選んだembedding profileがSQLite上でactiveかつ、選択した
+`VectorIndexBackend`のbuildがそのprofileに対して`ready`である場合にのみ動く
+(`vector_search.check_vector_availability`)。条件を満たさない場合は黙ってlexical検索へ
+fallbackせず、`[NG] Vector search: ...`という明確なエラーで拒否する。本番のembedding
+providerとsqlite-vec backendはまだ実装していない(`ExactScanBackend` + fake providerのみ)ため、
+標準配布のまま`--vector`/`--hybrid`を使うと「provider is not installed」系のエラーになる
+(`python brain.py embeddings sync`と同じ制約)。詳細な設計は
+`docs/VECTOR_SEARCH_DESIGN.md`の14節(Sprint分割案)を参照。
+
 ## プロジェクト構成
 
 ```
@@ -115,9 +138,22 @@ brain-twin-2/
 │  ├ memory_persistence.py # MemoryをSQLiteへ反映する共通処理(pipeline/reconcileの両方が使う)
 │  ├ reconcile.py         # processed_atの反映漏れ(commit前クラッシュ)を検出・自己修復
 │  ├ pipeline.py          # add / process / reindex の実処理
-│  ├ search.py            # 簡易Hybrid Retrieval
+│  ├ search.py            # 簡易Hybrid Retrieval(lexical、Phase 1〜3)
+│  ├ retrieval.py         # Phase 3: Associative Retrieval(保存済みLinkの1-hop展開)
+│  ├ retrieval_weights.py # metadata_multiplier等、lexical/HybridのRanking重みを1箇所に集約
+│  ├ embedding_provider.py   # Embedding Provider Protocol・profile・typed errors(SDK非依存)
+│  ├ embedding_config.py     # user config(Git管理外)の読み込み・secret値の拒否
+│  ├ embedding_document.py   # canonical embedding document + content hash
+│  ├ embedding_vector.py     # canonical float32 BLOB encode/decode
+│  ├ embedding_repository.py # embedding cache用のSQLite repository層
+│  ├ embedding_service.py    # 再構築可能なembedding cacheのsync/rebuild orchestration
+│  ├ embedding_runtime.py    # user configからprovider/backendインスタンスを組み立てる
+│  ├ vector_index.py      # VectorIndexBackend Protocol
+│  ├ vector_exact.py      # ExactScanBackend(小規模/フォールバック用のBLOB全走査cosine検索)
+│  ├ vector_search.py     # Sprint 4C: Vector Primary Search + availability gate
+│  ├ hybrid_search.py     # Sprint 4C: Hybrid Primary Search(Weighted RRF)
 │  └ cli.py               # argparseによるコマンド定義
-├ tests/                  # pytest (94 tests)
+├ tests/                  # pytest (298 tests)
 ├ scripts/setup.ps1
 ├ vault/                  # 実際のVault(Git管理外、実行時に自動生成)
 └ data/                   # SQLite index(Git管理外)
@@ -567,7 +603,7 @@ Vector backendのmutationはcanonical BLOBではなく派生indexだけを対象
 Embedding user configはseparator/camelCaseを正規化したcredential key検査を行い、未知の
 nested fieldであってもAPI key/token/password/secret類の平文保存を拒否する。
 
-### Vector Search Sprint 4B（外部レビュー待ち）
+### Vector Search Sprint 4B(2026-08-25、ユーザーによる外部レビューGO受領)
 
 canonical embedding cacheは次の明示commandで管理する。通常の`reindex`は従来どおり
 providerを呼ばず、embedding生成やnetwork accessを開始しない。
@@ -593,14 +629,42 @@ upsertしない。同一active profileかつbackend stateが完全にreadyの場
 またtitle/content変更時はSQLite triggerが既存embeddingを即時invalid化し、ExactScanはvalid rowを
 top-K計算前にSQLで限定する。したがってsync前やprovider失敗中にstale vectorは検索候補にならない。
 
-指示書のPhase 2の残り(自動ラベリングの高度化、より高度なEntity抽出)、および
-Phase 3以降: Contradiction Detection・Memory Consolidation・Vector Search・
-LLM Provider Interface・スマホ連携・`ask`コマンド、など。
+### Vector Search Sprint 4C(外部レビュー待ち)
+
+「Sprint 4Cの目的」節の「使い方」に実際のコマンド例がある。設計上のポイントのみここに記録する。
+
+- **Hybrid lexical channelは`search.search()`を呼ばない**。DB層に新設した
+  `db.search_lexical_candidates()`(BM25のみ、importance/confidence/recency未適用)を使う。
+  metadata weightingの式そのものは`search.py`から`retrieval_weights.py`へ抽出し、lexical検索と
+  Hybridの両方が同じ`metadata_multiplier()`を参照する(実装が分岐しない)。抽出前後で
+  `search()`の出力が変わっていないことは`tests/test_search.py`のcharacterization testで固定した。
+- **Vector Primary Search**(`vector_search.py`)は、query embeddingの検証(dimension/finite/
+  非zero/normalized契約)と、activeなprofile・backendの両方が完全に`ready`であることを確認する
+  availability gateを経てから`VectorIndexBackend.search()`を呼ぶ。条件を満たさない場合は
+  `VectorSearchUnavailableError`を送出し、lexical検索へ黙ってfallbackしない。
+- **Hybrid Primary Search**(`hybrid_search.py`)はpure lexical候補とpure vector候補のunionを
+  Weighted Reciprocal Rank Fusion(既定 lexical 0.6 / vector 0.4 / `rrf_k=60`、
+  `RetrievalWeights`に集約)で融合し、`metadata_multiplier`をfusion後に1回だけ適用する。
+  ranking自体は軽量なimportance/confidence/event_dateだけで行い、確定した上位N件のIDにだけ
+  title/content/topics/entitiesを取得する(候補全件の本文を読み込まない)。同点はfinal_score→
+  best channel rank→event_date→memory_idの順で決定的に解決する。
+- どちらも**まだAssociative Retrieval(`--related`)と統合していない**(Sprint 4Dで
+  `retrieve_from_primary()`へ接続予定)。`search --vector --related` / `--hybrid --related`は
+  明確な未対応errorになる(黙ってlexicalの1-hop展開に切り替えたりしない)。
+- Sprint 4Bの実装中に見つかった**embedding consistency race**(providerへの問い合わせ中に
+  Memoryのtitle/contentが変更されると、古い本文のvectorがvalidとして保存されてしまいうる問題)
+  もこのSprintで修正した。書き込み直前に短いtransaction内でMemoryを再読込し、現在の
+  content_hashと一致する場合だけvalid保存する。不一致ならそのまま何もせず、次回syncが
+  現在の本文を前提に再処理する。staging profileのactivate直前にも`ready == total_active`を
+  再確認し、レースで一部がskipされたまま不完全なindexがactiveになることを防ぐ。
+
+production embedding provider(sentence-transformers/OpenAI/Ollama等)と`SqliteVecBackend`本番
+adapterはSprint 4Cでも意図的に未実装のまま(`ExactScanBackend` + fake/recording providerのみで
+検索architecture自体を完成させる方針)。
 
 ### 次にやるべきPhase
 
-指示書28章のPhase分割に沿うなら、次は **Phase 3(Retrieval)** の残り、具体的には
-指示書17章「二段階想起(Associative Retrieval)」——`search` の結果からLinkを辿って
-関連Memoryも合わせて提示する機能——が最も自然な続き。Phase 2で作った `links` テーブル
-(`db.links_for_memory`)はこのために既に用意してある。次点は同じPhase 3の
-「timeline検索」(event_dateでの絞り込み)。
+Phase 1〜3(Memory Foundation、Automatic Memory Worker、Retrieval)は完了している。
+Vector Search(Phase 4)はSprint 4A〜4Cまで実装済みで、Sprint 4Cは現時点でレビュー待ち。
+次に許可されるまでは **Sprint 4D(Hybrid PrimaryとAssociative Retrievalの統合、
+10k件規模のWindows benchmark、障害・復旧・migrationの検証)** へは進まない。

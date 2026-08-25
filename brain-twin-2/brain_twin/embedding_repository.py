@@ -49,6 +49,27 @@ def active_memories_page(
     return [EmbeddingMemoryRow(*row) for row in rows]
 
 
+def memories_by_ids(
+    conn: sqlite3.Connection, memory_ids: list[str]
+) -> dict[str, EmbeddingMemoryRow]:
+    """Re-read current title/content for a small id set.  Used right before a canonical
+    embedding write to detect a concurrent Memory change that raced the provider call;
+    a Memory that is missing here (deleted or no longer active) is also treated as a
+    mismatch by the caller."""
+    if not memory_ids:
+        return {}
+    result: dict[str, EmbeddingMemoryRow] = {}
+    for start in range(0, len(memory_ids), 500):
+        batch = memory_ids[start : start + 500]
+        placeholders = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"SELECT id, title, content FROM memories WHERE status = 'active' AND id IN ({placeholders})",
+            batch,
+        ).fetchall()
+        result.update({row[0]: EmbeddingMemoryRow(*row) for row in rows})
+    return result
+
+
 def embedding_metadata_by_ids(
     conn: sqlite3.Connection, *, memory_ids: list[str], profile_fingerprint: str
 ) -> dict[str, EmbeddingMetadata]:

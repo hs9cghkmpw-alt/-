@@ -16,7 +16,50 @@ For Brain Twin 2, use these repository files and Git history:
 
 If documentation conflicts with code or tests, **do not guess**. Inspect Git history, reconcile the discrepancy, and record the corrected state in `CURRENT_STATE.md` and `WORKLOG.md`.
 
-## 2. Mandatory startup sequence
+## 2. Authority and stale handoff documents
+
+Handoff documents (`CURRENT_STATE.md`, `WORKLOG.md`) are written at the end of a task and can lag behind a decision made in conversation (an external review, a GO, a scope change) that has not yet been written back to the repository. When deciding what to trust at the start of a task, use this priority order:
+
+1. The current user's explicit, latest instruction in this conversation.
+2. `AGENTS.md` (this file).
+3. `brain-twin-2/docs/CURRENT_STATE.md`.
+4. `brain-twin-2/docs/WORKLOG.md`.
+5. `brain-twin-2/README.md` / design docs.
+6. Prior conversation history or an old prompt.
+
+If the current user instruction explicitly declares one of the following:
+
+- GO
+- COMPLETE
+- external review approved
+- authorization to begin the next Sprint/phase
+- a blocker lifted
+- a scope change
+
+then do not stop merely because `CURRENT_STATE.md` or `WORKLOG.md` still shows an older status such as "external review pending", "do not begin next Sprint", or "implementation pending review" — when it is clear that this is only a stale handoff-document update lag, not a real unresolved blocker. In that case:
+
+1. Treat the latest explicit user instruction as authoritative.
+2. Treat the older status documents as stale handoff state, not a live blocker.
+3. Begin the authorized work directly, without pausing to ask for confirmation of the GO/authorization itself.
+4. Synchronize `CURRENT_STATE.md` / `WORKLOG.md` as part of the normal end-of-task documentation update (Sections 6–8) — do not create a separate commit only to sync documents.
+
+### When this rule does not apply
+
+Do not use this rule to skip confirmation when:
+
+- the latest user instruction is itself ambiguous about what is authorized;
+- the stated repository/branch/project does not match what you observe;
+- the requested scope is materially inconsistent with recent history;
+- the request requires a destructive operation, a force push, or history rewrite;
+- the request touches secrets/credentials in an unsafe way;
+- another agent may be concurrently editing the same branch;
+- tests or CI are currently failing;
+- the request conflicts with the safety/maintainability rules elsewhere in this file;
+- you are inferring or guessing that something was approved rather than being told so explicitly.
+
+In short: a status Markdown file being one commit behind is not, by itself, a reason to stop. Being genuinely unsure whether something was authorized is.
+
+## 3. Mandatory startup sequence
 
 Before changing code, every agent must:
 
@@ -34,7 +77,7 @@ Before changing code, every agent must:
 
 Do not begin from an old task prompt without first comparing it with `CURRENT_STATE.md` and the current HEAD.
 
-## 3. Single-writer rule
+## 4. Single-writer rule
 
 Do not have Claude Code and Codex modify the same working branch at the same time.
 
@@ -42,7 +85,7 @@ Before starting, pull the latest `brain-twin-dev`. Before pushing, verify that t
 
 `git push --force` / `--force-with-lease` is prohibited unless the user explicitly authorizes it for a specific recovery operation.
 
-## 4. Brain Twin 2 engineering rules
+## 5. Brain Twin 2 engineering rules
 
 For `brain-twin-2/`:
 
@@ -59,7 +102,7 @@ For `brain-twin-2/`:
 - Do not modify the old `brain-twin/` project unless the task explicitly requires it.
 - Do not advance into a later phase merely because it is an obvious next step. Stop at the requested scope.
 
-## 5. Security / privacy
+## 6. Security / privacy
 
 Never put secrets into repository documentation, commit messages, or work logs, including:
 
@@ -73,7 +116,7 @@ Never put secrets into repository documentation, commit messages, or work logs, 
 
 Record only the minimum operational information required for handoff.
 
-## 6. Mandatory completion sequence
+## 7. Mandatory completion sequence
 
 A task is not complete until the agent has:
 
@@ -101,7 +144,7 @@ gh run view $RunId --log-failed
 
 If CI fails, diagnose, fix, retest, commit/push, and verify the new CI run before reporting completion.
 
-## 7. WORKLOG entry format
+## 8. WORKLOG entry format
 
 Append a new chronological entry to `brain-twin-2/docs/WORKLOG.md`. Keep it concise and factual.
 
@@ -123,7 +166,7 @@ Suggested structure:
 
 Do not paste huge command transcripts into `WORKLOG.md`; summarize them.
 
-## 8. CURRENT_STATE rules
+## 9. CURRENT_STATE rules
 
 `brain-twin-2/docs/CURRENT_STATE.md` is a snapshot, not a diary. Keep it short enough that a new agent can read it before every task.
 
@@ -140,7 +183,7 @@ It should always state:
 
 When work changes any of those, update the file before the final commit.
 
-## 9. Review behavior
+## 10. Review behavior
 
 A reviewer (including ChatGPT) must read the shared state files and inspect the actual GitHub commit/diff/tests/CI before issuing a GO/STOP decision when repository access is available.
 

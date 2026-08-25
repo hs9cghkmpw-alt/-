@@ -1,6 +1,6 @@
 # Vector Search Design（設計レビュー用）
 
-Status: **Sprint 4A complete. Sprint 4B implemented; external review pending**
+Status: **Sprint 4A complete. Sprint 4B complete. Sprint 4C implemented; external review pending**
 
 Scope: Vector Searchの設計のみ。実装、`ask`、LLM回答生成、Contradiction Detection、
 Memory Consolidationは含まない。
@@ -489,14 +489,27 @@ core dependency化と本番adapter実装はこの判定には含めない。
 - local deterministic fakeでreindex完全復元を先に保証。
 - production providerはまだ1種類に限定し、LLM interfaceは作らない。
 
-hardening実装済み（外部レビュー待ち）。production providerとSqliteVecBackendは意図的に未実装。
-管理CLIは独立した`embeddings status/sync/rebuild`を採用し、通常`reindex`とは接続しない。
+hardening完了、外部レビューGO受領(2026-08-25)。production providerとSqliteVecBackendは
+意図的に未実装のまま。管理CLIは独立した`embeddings status/sync/rebuild`を採用し、通常
+`reindex`とは接続しない。GOと同時に見つかった、providerの問い合わせ中にMemoryが変更される
+とstale vectorがvalidとして保存されうるraceは、Sprint 4Cの一部として修正した(書き込み直前の
+short transactionでのcontent_hash再確認、staging activate直前の`ready == total_active`再確認)。
 
 ### Sprint 4C — vector and hybrid primary retrieval
 
-- `vector_search()`、weighted RRF `hybrid_search()`、中央weights。
-- 既存search後方互換と本文遅延取得。
-- CLI opt-inとdiagnostic component scores。
+実装済み(外部レビュー待ち)。
+
+- `vector_search()`(availability gate + query embedding検証 + 本文遅延取得)、
+  weighted RRF `hybrid_search()`、`RetrievalWeights`による中央weights。
+- Hybridのlexical channelは`search.search()`を呼ばず、新設のpure BM25候補API
+  (`db.search_lexical_candidates()`)を使う。metadata multiplierの式は
+  `retrieval_weights.py`へ集約し、既存`search()`の出力はcharacterization testで固定した
+  まま変わっていない。
+- CLI opt-in(`search --vector` / `search --hybrid`、mutually exclusive)とdiagnostic
+  component scores(`--verbose`)。capability unavailable時は明確なerrorで拒否する
+  (黙ってlexicalへfallbackしない)。
+- Associative Retrieval(`--related`)との統合はまだ行っていない(Sprint 4D予定)。
+  `--vector --related` / `--hybrid --related`は明確な未対応errorになる。
 
 ### Sprint 4D — associative integration and hardening
 

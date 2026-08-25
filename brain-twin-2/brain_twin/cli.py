@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from brain_twin import db, embedding_runtime, pipeline, retrieval, search
+from brain_twin import db, embedding_runtime, hybrid_search, pipeline, retrieval, search, vector_search
 from brain_twin.config import load_config
 from brain_twin.embedding_config import default_user_config_path, load_embedding_settings
 from brain_twin.embedding_provider import EmbeddingConfigurationError, EmbeddingError
@@ -43,8 +43,85 @@ def _cmd_process(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_vector_results(results: list[vector_search.VectorResult], *, verbose: bool) -> None:
+    if not results:
+        print("該当するMemoryが見つかりませんでした。")
+        return
+    for r in results:
+        topics = ",".join(r.topics) if r.topics else "-"
+        entities = ",".join(r.entities) if r.entities else "-"
+        print(f"[{r.event_date}] ({r.type} / importance={r.importance} / confidence={r.confidence:.2f} / topics={topics} / entities={entities})")
+        print(f"  {r.title}")
+        if verbose:
+            snippet = r.content if len(r.content) <= 120 else r.content[:120] + "…"
+            print(f"  {snippet}")
+            print(f"  similarity={r.similarity:.4f} vector_rank={r.vector_rank}")
+        print(f"  id={r.memory_id}")
+        print()
+
+
+def _print_hybrid_results(results: list[hybrid_search.HybridResult], *, verbose: bool) -> None:
+    if not results:
+        print("該当するMemoryが見つかりませんでした。")
+        return
+    for r in results:
+        topics = ",".join(r.topics) if r.topics else "-"
+        entities = ",".join(r.entities) if r.entities else "-"
+        print(f"[{r.event_date}] ({r.type} / importance={r.importance} / confidence={r.confidence:.2f} / topics={topics} / entities={entities})")
+        print(f"  {r.title}")
+        if verbose:
+            snippet = r.content if len(r.content) <= 120 else r.content[:120] + "…"
+            print(f"  {snippet}")
+            lexical = (
+                f"lexical_rank={r.lexical_rank} raw={r.lexical_raw_score:.4f}"
+                if r.lexical_rank is not None else "lexical=-"
+            )
+            vector = (
+                f"vector_rank={r.vector_rank} similarity={r.vector_similarity:.4f}"
+                if r.vector_rank is not None else "vector=-"
+            )
+            print(
+                f"  {lexical} / {vector} / fusion={r.fusion_score:.4f} / "
+                f"metadata_multiplier={r.metadata_multiplier:.4f} / final={r.final_score:.4f}"
+            )
+        print(f"  id={r.memory_id}")
+        print()
+
+
 def _cmd_search(args: argparse.Namespace) -> int:
     config = load_config()
+
+    if args.related and (args.vector or args.hybrid):
+        print(
+            "[NG] --related は --vector / --hybrid とまだ併用できません"
+            "(Sprint 4DでAssociative Retrievalと統合予定)。",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.vector or args.hybrid:
+        try:
+            settings, backend, provider = _embedding_components(require_provider=True)
+        except (EmbeddingError, OSError, ValueError) as exc:
+            print(f"[NG] Vector search: {exc}", file=sys.stderr)
+            return 1
+        try:
+            with db.connect(config) as conn:
+                if args.vector:
+                    _print_vector_results(
+                        vector_search.vector_search(conn, args.query, provider, backend, limit=args.limit),
+                        verbose=args.verbose,
+                    )
+                else:
+                    _print_hybrid_results(
+                        hybrid_search.hybrid_search(conn, args.query, provider, backend, limit=args.limit),
+                        verbose=args.verbose,
+                    )
+        except EmbeddingError as exc:
+            print(f"[NG] Vector search: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
     if args.related:
         try:
             retrieval_result = retrieval.retrieve_with_config(
@@ -184,6 +261,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--limit", type=int, default=10)
     p_search.add_argument("--related", action="store_true", help="1-hopの関連Memoryも表示する")
     p_search.add_argument("--related-limit", type=int, default=retrieval.DEFAULT_RELATED_LIMIT)
+    vector_group = p_search.add_mutually_exclusive_group()
+    vector_group.add_argument("--vector", action="store_true", help="Vector Primary Searchを使う(Sprint 4C)")
+    vector_group.add_argument("--hybrid", action="store_true", help="lexical+VectorのHybrid Primary Searchを使う(Sprint 4C)")
     p_search.add_argument("-v", "--verbose", action="store_true", help="本文の抜粋も表示する")
     p_search.set_defaults(func=_cmd_search)
 

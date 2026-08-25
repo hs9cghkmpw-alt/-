@@ -787,6 +787,117 @@ def timeline_memories(
     return [TimelineRow(*row) for row in rows]
 
 
+@dataclass(frozen=True)
+class LexicalCandidate:
+    """Pure BM25 relevance for one Memory; no metadata weighting, no body/entities.
+
+    This is the API Hybrid ranking (Sprint 4C) must use instead of `search()`, which already
+    has importance/confidence/recency baked into its ordering."""
+
+    memory_id: str
+    bm25_score: float
+    lexical_rank: int
+
+
+def search_lexical_candidates(
+    conn: sqlite3.Connection, query: str, *, limit: int
+) -> list[LexicalCandidate]:
+    if limit <= 0:
+        return []
+    phrase = '"' + query.replace('"', '""') + '"'
+    rows = conn.execute(
+        """
+        SELECT m.id, bm25(memories_fts) AS score
+        FROM memories_fts
+        JOIN memories m ON m.id = memories_fts.memory_id
+        WHERE memories_fts MATCH ? AND m.status = 'active'
+        ORDER BY score
+        LIMIT ?
+        """,
+        (phrase, limit),
+    ).fetchall()
+    return [
+        LexicalCandidate(memory_id=r[0], bm25_score=r[1], lexical_rank=rank)
+        for rank, r in enumerate(rows, start=1)
+    ]
+
+
+@dataclass(frozen=True)
+class MemoryRankingSignal:
+    """Lightweight metadata for scoring a Hybrid candidate; no title/content/topics/entities."""
+
+    memory_id: str
+    importance: int
+    confidence: float
+    event_date: str
+
+
+def memory_ranking_signals_by_ids(
+    conn: sqlite3.Connection, memory_ids: list[str]
+) -> dict[str, MemoryRankingSignal]:
+    """Fetch just enough to compute `metadata_multiplier()` for the full Hybrid candidate
+    union, before any dedupe/ranking/limit trims it to the final top N."""
+    if not memory_ids:
+        return {}
+    result: dict[str, MemoryRankingSignal] = {}
+    for batch in _chunked(memory_ids):
+        placeholders = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"""
+            SELECT id, importance, confidence, event_date FROM memories
+            WHERE id IN ({placeholders}) AND status = 'active'
+            """,
+            batch,
+        ).fetchall()
+        for r in rows:
+            result[r[0]] = MemoryRankingSignal(
+                memory_id=r[0], importance=r[1], confidence=r[2], event_date=r[3]
+            )
+    return result
+
+
+@dataclass(frozen=True)
+class MemoryResultDetail:
+    """Full display detail for a Vector/Hybrid result; fetched only for the final top N ids."""
+
+    memory_id: str
+    title: str
+    content: str
+    type: str
+    event_date: str
+    importance: int
+    confidence: float
+    topics: list[str]
+    entities: list[str]
+
+
+def memory_result_details_by_ids(
+    conn: sqlite3.Connection, memory_ids: list[str]
+) -> dict[str, MemoryResultDetail]:
+    if not memory_ids:
+        return {}
+    raw: dict[str, tuple] = {}
+    for batch in _chunked(memory_ids):
+        placeholders = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"""
+            SELECT id, title, content, type, event_date, importance, confidence, topics_json
+            FROM memories WHERE id IN ({placeholders}) AND status = 'active'
+            """,
+            batch,
+        ).fetchall()
+        raw.update({r[0]: r for r in rows})
+    entities_by_id = entities_for_memories(conn, list(raw.keys()))
+    return {
+        memory_id: MemoryResultDetail(
+            memory_id=memory_id, title=r[1], content=r[2], type=r[3], event_date=r[4],
+            importance=r[5], confidence=r[6], topics=json.loads(r[7] or "[]"),
+            entities=[e.name for e in entities_by_id.get(memory_id, [])],
+        )
+        for memory_id, r in raw.items()
+    }
+
+
 def search(conn: sqlite3.Connection, query: str, *, limit: int = 20) -> list[SearchHit]:
     phrase = '"' + query.replace('"', '""') + '"'
     rows = conn.execute(

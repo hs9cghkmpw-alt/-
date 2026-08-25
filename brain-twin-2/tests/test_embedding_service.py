@@ -466,6 +466,81 @@ def test_metadata_only_change_remains_exact_searchable(config, change):
         assert backend.search(conn, provider.profile.fingerprint, [1, 1, 1], limit=5)
 
 
+# ---- Sprint 4C: consistency race between provider call and canonical cache write ----
+
+
+class ContentChangingProvider(RecordingProvider):
+    """Simulates a concurrent process editing a Memory while `embed_documents` (the slow
+    provider call) is in flight, by mutating the row on a second connection before returning."""
+
+    def __init__(self, config, memory_id, changes, **kwargs):
+        super().__init__(**kwargs)
+        self._config = config
+        self._memory_id = memory_id
+        self._changes = changes
+
+    def embed_documents(self, texts):
+        vectors = super().embed_documents(texts)
+        with db.connect(self._config) as conn:
+            _memory(conn, self._memory_id, **self._changes)
+            conn.commit()
+        return vectors
+
+
+@pytest.mark.parametrize("field", ["title", "content"])
+def test_concurrent_content_change_during_provider_call_is_not_saved_as_valid(config, field):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    provider = ContentChangingProvider(config, "a", {field: "changed-during-embed"})
+    result = _service(config, provider).sync()
+    assert result.embedded == 0  # raced item is not counted as successfully embedded
+    with db.connect(config) as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM memory_embeddings WHERE memory_id = 'a' AND is_valid = 1"
+        ).fetchone()[0] == 0
+
+
+def test_next_sync_after_race_embeds_the_new_content(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    racing = ContentChangingProvider(config, "a", {"title": "changed-during-embed"})
+    _service(config, racing).sync()
+    resumed = RecordingProvider()
+    result = _service(config, resumed).sync()
+    assert result.embedded == 1
+    assert resumed.batches[0][0].startswith("title: changed-during-embed")
+    with db.connect(config) as conn:
+        row = conn.execute(
+            "SELECT content_hash, is_valid FROM memory_embeddings WHERE memory_id = 'a'"
+        ).fetchone()
+    assert row[1] == 1
+
+
+def test_concurrent_change_during_new_profile_sync_blocks_staging_activation(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); _memory(conn, "b"); conn.commit()
+    old = RecordingProvider(_profile(epoch="old")); _service(config, old).sync()
+
+    backend = TrackingBackend()
+    racing = ContentChangingProvider(
+        config, "a", {"title": "changed-during-embed"}, profile=_profile(epoch="new")
+    )
+    result = _service(config, racing, backend).sync()
+
+    # "b" embeds cleanly under the new profile, but "a" raced -- the new profile's cache is
+    # incomplete, so staging must not activate.
+    assert not result.active_switched
+    assert backend.builds == []
+    with db.connect(config) as conn:
+        assert repository.active_profile_fingerprint(conn) == old.profile.fingerprint
+
+    resumed = RecordingProvider(_profile(epoch="new"))
+    final = _service(config, resumed, backend).sync()
+    assert final.active_switched
+    with db.connect(config) as conn:
+        assert repository.active_profile_fingerprint(conn) == resumed.profile.fingerprint
+
+
 def test_failed_stale_reembedding_stays_unsearchable_then_success_restores(config):
     with db.connect(config) as conn:
         _memory(conn, "a"); conn.commit()

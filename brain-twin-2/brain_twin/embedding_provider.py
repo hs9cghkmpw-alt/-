@@ -27,6 +27,13 @@ class EmbeddingValidationError(EmbeddingError):
     """Provider output or cached data is malformed."""
 
 
+class VectorSearchUnavailableError(EmbeddingError):
+    """The configured profile/backend is not fully activated for vector search.
+
+    Raised instead of silently falling back to lexical search; callers must surface this
+    explicitly rather than swallow it (Sprint 4C availability gate)."""
+
+
 @dataclass(frozen=True)
 class EmbeddingProfile:
     provider_id: str

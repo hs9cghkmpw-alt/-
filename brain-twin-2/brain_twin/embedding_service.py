@@ -121,7 +121,22 @@ class EmbeddingService:
                         items = provider_batch[commit_start : commit_start + self.policy.commit_batch_size]
                         vector_items = validated[commit_start : commit_start + self.policy.commit_batch_size]
                         try:
+                            # Re-read current Memory content in a short transaction right before
+                            # persisting is_valid=1. The provider call above can take a long time;
+                            # if another process changed this Memory's title/content while we were
+                            # waiting on the provider, the vector we just computed is for stale text
+                            # and must never be saved as valid (Sprint 4C consistency-race fix).
+                            current_rows = repository.memories_by_ids(
+                                conn, [item[0].memory_id for item in items]
+                            )
+                            committed = 0
                             for (row, _, content_hash), vector in zip(items, vector_items):
+                                current = current_rows.get(row.memory_id)
+                                if current is None or build_embedding_document(current).content_hash != content_hash:
+                                    # Content changed (or the Memory left the active set) during
+                                    # the provider call. Leave the cache untouched; the next sync
+                                    # rereads current content and reprocesses it from scratch.
+                                    continue
                                 repository.upsert_embedding(
                                     conn, memory_id=row.memory_id, profile=profile,
                                     content_hash=content_hash, vector=list(vector),
@@ -131,26 +146,37 @@ class EmbeddingService:
                                     self.backend.sync_upsert(
                                         conn, row.memory_id, profile.fingerprint, vector
                                     )
+                                committed += 1
                             conn.commit()
                         except BaseException:
                             conn.rollback()
                             raise
-                        embedded += len(items)
+                        embedded += committed
 
+            active_switched = False
             if not incremental_backend_sync:
-                # Staging cache is complete. build must preserve the old active index on failure.
-                self.backend.build(conn, profile.fingerprint)
-                repository.set_active_profile(conn, profile.fingerprint)
-                repository.set_backend_state(
-                    conn, backend=self.backend.backend_id,
-                    schema_version=self.backend.schema_version,
-                    profile_fingerprint=profile.fingerprint, build_status="ready",
-                    built_at=self._timestamp(),
+                # Staging activation must only happen once every active Memory truly has a
+                # ready embedding under this profile. A race-skipped item above would otherwise
+                # let a partially-built staging index become active (Sprint 4C hardening).
+                status = inspect_embedding_status(
+                    conn, profile, self.backend.backend_id,
+                    db_read_batch_size=self.policy.db_read_batch_size,
                 )
-                conn.commit()
+                if status.ready == status.total_active:
+                    # Staging cache is complete. build must preserve the old active index on failure.
+                    self.backend.build(conn, profile.fingerprint)
+                    repository.set_active_profile(conn, profile.fingerprint)
+                    repository.set_backend_state(
+                        conn, backend=self.backend.backend_id,
+                        schema_version=self.backend.schema_version,
+                        profile_fingerprint=profile.fingerprint, build_status="ready",
+                        built_at=self._timestamp(),
+                    )
+                    conn.commit()
+                    active_switched = previous_active != profile.fingerprint
         return EmbeddingSyncResult(
             embedded=embedded, skipped=skipped, failed=0,
-            active_switched=previous_active != profile.fingerprint,
+            active_switched=active_switched,
         )
 
     def rebuild(self) -> EmbeddingSyncResult:

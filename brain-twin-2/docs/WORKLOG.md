@@ -113,3 +113,24 @@ Rules:
 - Commit: this commit。
 - Known issues: SqliteVecBackend/production provider/Vector・Hybrid Searchは未実装。
 - Next: **Sprint 4B hardening implemented; external review pending**。Sprint 4Cへは進めない。
+
+## 2026-08-25 — Claude Code — Sprint 4C vector + hybrid primary retrieval
+
+- Branch: `brain-twin-dev`
+- Base: `87f787d32c0838d5e30a9e424b6bb98bddeca7d0`
+- Scope: ユーザーの明示指示（Sprint 4B external review GO / COMPLETE、Sprint 4Cの着手許可）に基づき着手。Sprint 4Cとして pure lexical candidate API、Vector Primary Search、Hybrid Primary Search (weighted RRF)、metadata multiplier共通化、top N後だけのdetail取得、diagnostic component scores、CLI opt-in (`--vector`/`--hybrid`) を実装。Associative Retrievalとの統合(Sprint 4D)、SqliteVecBackend本番adapter、production embedding providerは対象外のまま。
+- Also fixed (identified in the same instruction, ahead of Sprint 4C proper): a consistency race in `EmbeddingService.sync()` where a Memory title/content change during the (potentially slow) provider call could let a stale vector be written as `is_valid=1`. Fixed by re-verifying `content_hash` against a fresh Memory read in a short transaction immediately before the write (skip, don't raise, on mismatch — reprocessed by the next sync), and by re-checking `ready == total_active` immediately before staging activation instead of trusting the loop's own bookkeeping.
+- Changed:
+  - `brain_twin/embedding_service.py`, `brain_twin/embedding_repository.py` (`memories_by_ids`), `brain_twin/embedding_provider.py` (`VectorSearchUnavailableError`): consistency-race hardening.
+  - `brain_twin/db.py`: `search_lexical_candidates` (pure BM25, no metadata), `memory_ranking_signals_by_ids` (lightweight importance/confidence/event_date for the full Hybrid candidate union), `memory_result_details_by_ids` (full display detail, fetched only for the final top N).
+  - `brain_twin/retrieval_weights.py` (new): `metadata_multiplier`/`recency_weight`/`RetrievalWeights`/`MIN_QUERY_LENGTH`, shared by `search.py` and `hybrid_search.py` so the formula exists in exactly one place and is applied exactly once.
+  - `brain_twin/search.py`: refactored onto `retrieval_weights.py` with an injectable `now` for characterization testing; public behavior (score formula, order, limit, short-query, no embedding-config dependency) is unchanged and pinned by `tests/test_search.py`.
+  - `brain_twin/vector_search.py` (new): availability gate (active profile + backend id/schema/indexed-profile/ready all match), query embedding validation, `vector_search()` with lazy top-K detail fetch.
+  - `brain_twin/hybrid_search.py` (new): pure lexical + pure vector candidate union, Weighted Reciprocal Rank Fusion, metadata multiplier applied once after fusion, deterministic tie-break (final_score desc, best channel rank asc, event_date desc, memory_id asc), lazy top-N detail fetch.
+  - `brain_twin/cli.py`: `search --vector` / `search --hybrid` (mutually exclusive via argparse), explicit rejection of `--related` combined with either, capability-unavailable surfaces as a clear `[NG]` error (no silent lexical fallback), `--verbose` diagnostic component scores. Plain `search` is unchanged.
+  - `AGENTS.md`: added Section 2 "Authority and stale handoff documents" (explicit user GO/COMPLETE/authorization outranks a stale `CURRENT_STATE.md`/`WORKLOG.md` status, with explicit exceptions for ambiguity/scope mismatch/destructive ops/failing CI/safety conflicts/uncertain authorization); subsequent sections renumbered 3–10. `CLAUDE.md` now references this rule.
+- Tests: existing 232 kept unchanged; 66 new (race-condition, lexical candidate, search characterization, Vector, Hybrid, CLI). Local `298 passed`.
+- CI: verified against the pushed commit SHA specifically (not just "latest run on branch"); see commit line below.
+- Commit: this commit.
+- Known issues: `SqliteVecBackend` production adapter and a real embedding provider are still not implemented (`ExactScanBackend` + fake/recording providers only); `--vector`/`--hybrid` therefore return a clear "provider is not installed"-style error outside tests until a production provider lands. `--related` cannot yet be combined with `--vector`/`--hybrid` (planned for Sprint 4D). The Sprint 4C implementation itself is unreviewed.
+- Next: **Sprint 4C (vector + hybrid primary retrieval) implemented; external review pending.** Do not begin Sprint 4D until this is reviewed and explicitly approved.

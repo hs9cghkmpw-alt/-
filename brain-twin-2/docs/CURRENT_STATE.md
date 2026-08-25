@@ -19,15 +19,19 @@ Last updated: 2026-08-25
   - Final hardening review: **complete**
 - Phase 4 — Vector Search:
   - Sprint 4A contracts / canonical cache / ExactScan / Windows storage spike: **complete**
-  - Sprint 4B rebuildable embedding cache: **hardening implemented; external review pending**
-  - Sprint 4B hardening local tests: **232 passed**
+  - Sprint 4B rebuildable embedding cache: **complete** (external review GO received; a
+    remaining consistency race between the provider call and the canonical cache write was
+    hardened as part of Sprint 4C, see below)
+  - Sprint 4C vector + hybrid primary retrieval: **implemented; external review pending**
 
 ## Last known good implementation
 
-- Implementation commit: `368f0684f0eff0b1e739e676c445e1a848f53a05`
-- Commit title: `brain-twin-2: harden vector search Sprint 4A contracts`
-- Local test count: **180 passed**
-- GitHub Actions run: `32808314355`
+- Implementation commit: `87f787d32c0838d5e30a9e424b6bb98bddeca7d0` (this round's Sprint 4C
+  work builds on top of this reviewed Sprint 4B baseline; see `WORKLOG.md` for the Sprint 4C
+  commit once pushed)
+- Commit title: `brain-twin-2: harden embedding staging and validity`
+- Local test count at that baseline: **232 passed**
+- GitHub Actions run: `32811513632`
 - GitHub Actions result: **success**
 
 ## Completed review fixes — verify before Vector Search
@@ -47,12 +51,23 @@ ranking前は本文を含まない軽量candidateだけを取得し、dedupe/ran
 `related_limit` IDに限ってtitle/content/type/event_dateを取得する。
 outgoing/incoming、inactive除外、1-hop、決定的順序は維持する。
 
+### 3. Sprint 4C: embedding consistency race between provider call and cache write
+
+`EmbeddingService.sync()` computed a Memory's `content_hash` before the (potentially slow)
+provider call, then wrote `is_valid=1` using that pre-call hash without re-checking current
+content. A concurrent title/content edit during the provider call could let a stale vector
+become searchable. Fixed by re-reading the Memory in a short transaction immediately before
+the write and skipping the write (not raising) when the current content_hash no longer
+matches; staging activation now also re-verifies `ready == total_active` immediately before
+switching the active profile/backend, instead of trusting the loop's bookkeeping alone.
+
 ## Next authorized task
 
-**Sprint 4B hardening implemented; external review pending.**
+**Sprint 4C (vector + hybrid primary retrieval) implemented; external review pending.**
 
-Do **not** begin Sprint 4C until this implementation is reviewed and explicitly approved.
-LLM integration, `ask`, Contradiction Detection, Memory Consolidation, and smartphone integration remain out of scope.
+Do **not** begin Sprint 4D (Associative Retrieval integration) until this implementation is
+reviewed and explicitly approved. Production embedding providers, `SqliteVecBackend`, `ask`,
+Contradiction Detection, Memory Consolidation, and smartphone integration remain out of scope.
 
 ## Core invariants
 
