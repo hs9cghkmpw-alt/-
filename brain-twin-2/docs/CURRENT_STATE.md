@@ -16,15 +16,15 @@ Last updated: 2026-08-25
 - Phase 3 — Retrieval:
   - Associative Retrieval (1-hop outgoing + incoming links): **implemented**
   - Timeline Search (`event_date` range filtering): **implemented**
-  - Final hardening review: **2 fixes implemented; CI/review confirmation pending**
+  - Final hardening review: **complete**
 
 ## Last known good implementation
 
-- Implementation commit: this review-fix commit (see Git history)
+- Implementation commit: `e199bb2` (see Git history for full SHA)
 - Commit title: `brain-twin-2: preserve link strength in retrieval`
 - Local test count: **123 passed**
-- GitHub Actions for this commit: **pending push/verification**
-- Previous successful run: `32797928602` (`bfc679d`, **success**)
+- GitHub Actions run: `32801919294`
+- GitHub Actions result: **success**
 
 ## Completed review fixes — verify before Vector Search
 
@@ -45,7 +45,7 @@ outgoing/incoming、inactive除外、1-hop、決定的順序は維持する。
 
 ## Next authorized task
 
-**このcommitのGitHub ActionsとレビューでPhase 3完了を確認後、Vector Searchへ進む。**
+**Phase 3 Retrievalは完了。次の明示的な実装指示でVector Searchへ進む。**
 
 Do **not** begin Vector Search, LLM integration, `ask`, Contradiction Detection, Memory Consolidation, or smartphone integration until these two fixes are reviewed and Phase 3 is explicitly marked complete.
 

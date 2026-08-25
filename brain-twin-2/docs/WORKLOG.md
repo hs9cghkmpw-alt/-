@@ -37,7 +37,7 @@ Rules:
 - Scope: Link生成時strengthの永続化・復元・ranking利用と、大量Related候補の本文遅延取得。
 - Changed: Markdown/SQLiteへ実strengthを保存し、legacyは一律`0.25`で非破壊移行。軽量candidateをrank/dedupeしてからtop N詳細だけ取得。
 - Tests: local `123 passed`; CLI process/search --related/reindex再検索とstrength完全一致を確認。
-- CI: push後に確認予定。
+- CI: GitHub Actions run `32801919294`, `success`。
 - Commit: this commit
 - Known issues: Vector Search等の後続Phaseは未実装。
 - Next: CIとレビューでPhase 3完了確認後、別タスクでVector Search。
