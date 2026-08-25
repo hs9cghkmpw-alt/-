@@ -17,6 +17,9 @@ Last updated: 2026-08-25
   - Associative Retrieval (1-hop outgoing + incoming links): **implemented**
   - Timeline Search (`event_date` range filtering): **implemented**
   - Final hardening review: **complete**
+- Phase 4 — Vector Search:
+  - Sprint 4A contracts / canonical cache / ExactScan / Windows storage spike: **implemented**
+  - Status: **external review pending**
 
 ## Last known good implementation
 
@@ -45,9 +48,9 @@ outgoing/incoming、inactive除外、1-hop、決定的順序は維持する。
 
 ## Next authorized task
 
-**Vector Search design review fixes implemented; external review pending.**
+**Sprint 4A implemented; external review pending.**
 
-Do **not** begin Vector Search implementation until this design is reviewed and explicitly approved.
+Do **not** begin Sprint 4B until this implementation is reviewed and explicitly approved.
 LLM integration, `ask`, Contradiction Detection, Memory Consolidation, and smartphone integration remain out of scope.
 
 ## Core invariants

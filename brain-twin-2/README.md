@@ -552,6 +552,15 @@ Markdown/Raw Log/SQLiteの内容が一致すること、`reindex`後も状態が
 
 ## 今後(まだ実装していないもの)
 
+### Vector Search Sprint 4A（外部レビュー待ち）
+
+provider/profile/backend contract、canonical embedding document/hash、backend共通の
+little-endian float32 BLOB cache、ExactScan reference backend、embedding用SQLite schemaを実装した。
+通常の`reindex`はproviderを要求せず、embedding cacheを空の派生tableとして再生成する。
+Windows spikeはsqlite-vec 0.1.9でPASSしたが、core dependency化や本番SqliteVecBackend、
+Vector/Hybrid Searchはまだ実装していない。詳細は`docs/VECTOR_SEARCH_DESIGN.md`と
+`docs/SQLITE_VEC_WINDOWS_SPIKE.md`を参照。
+
 指示書のPhase 2の残り(自動ラベリングの高度化、より高度なEntity抽出)、および
 Phase 3以降: Contradiction Detection・Memory Consolidation・Vector Search・
 LLM Provider Interface・スマホ連携・`ask`コマンド、など。

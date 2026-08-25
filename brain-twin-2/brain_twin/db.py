@@ -46,6 +46,8 @@ from pathlib import Path
 from typing import Iterator
 
 from brain_twin.config import Config
+from brain_twin.embedding_provider import EmbeddingProfile
+from brain_twin.embedding_vector import encode_embedding
 from brain_twin.models import ExtractedEntity
 
 # SQLiteの `IN (?, ?, ...)` はプレースホルダ数に上限がある(SQLITE_MAX_VARIABLE_NUMBER。
@@ -127,6 +129,49 @@ CREATE TABLE IF NOT EXISTS links (
 
 CREATE INDEX IF NOT EXISTS idx_links_target_memory ON links (target_memory_id);
 
+CREATE TABLE IF NOT EXISTS embedding_profiles (
+    fingerprint                 TEXT PRIMARY KEY,
+    provider_id                 TEXT NOT NULL,
+    model_name                  TEXT NOT NULL,
+    model_revision              TEXT NULL,
+    profile_epoch               TEXT NULL,
+    embedding_contract_version  INTEGER NOT NULL CHECK (embedding_contract_version > 0),
+    dimension                   INTEGER NOT NULL CHECK (dimension > 0),
+    normalized                  INTEGER NOT NULL CHECK (normalized IN (0, 1)),
+    document_template_version   INTEGER NOT NULL CHECK (document_template_version > 0),
+    created_at                  TEXT NOT NULL,
+    CHECK (
+        (model_revision IS NOT NULL AND trim(model_revision) != '' AND lower(trim(model_revision)) != 'unknown')
+        OR (profile_epoch IS NOT NULL AND trim(profile_epoch) != '' AND lower(trim(profile_epoch)) != 'unknown')
+    )
+);
+
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+    memory_id           TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    profile_fingerprint TEXT NOT NULL REFERENCES embedding_profiles(fingerprint) ON DELETE CASCADE,
+    content_hash        TEXT NOT NULL,
+    embedding_blob      BLOB NOT NULL,
+    embedded_at         TEXT NOT NULL,
+    PRIMARY KEY (memory_id, profile_fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_profile
+ON memory_embeddings(profile_fingerprint);
+
+CREATE TABLE IF NOT EXISTS active_embedding_state (
+    singleton                  INTEGER PRIMARY KEY CHECK (singleton = 1),
+    active_profile_fingerprint TEXT REFERENCES embedding_profiles(fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS vector_backend_state (
+    singleton                   INTEGER PRIMARY KEY CHECK (singleton = 1),
+    backend                     TEXT NOT NULL,
+    backend_schema_version      INTEGER NOT NULL CHECK (backend_schema_version > 0),
+    indexed_profile_fingerprint TEXT REFERENCES embedding_profiles(fingerprint),
+    build_status                TEXT NOT NULL,
+    built_at                    TEXT
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     memory_id UNINDEXED,
     title,
@@ -207,6 +252,10 @@ def reset_schema(db_path: Path) -> None:
         conn.executescript(
             """
             DROP TABLE IF EXISTS memories_fts;
+            DROP TABLE IF EXISTS vector_backend_state;
+            DROP TABLE IF EXISTS active_embedding_state;
+            DROP TABLE IF EXISTS memory_embeddings;
+            DROP TABLE IF EXISTS embedding_profiles;
             DROP TABLE IF EXISTS memory_entities;
             DROP TABLE IF EXISTS links;
             DROP TABLE IF EXISTS entities;
@@ -218,6 +267,76 @@ def reset_schema(db_path: Path) -> None:
         _apply_schema(conn)
     finally:
         conn.close()
+
+
+def upsert_embedding_profile(
+    conn: sqlite3.Connection, profile: EmbeddingProfile, *, created_at: str
+) -> str:
+    fingerprint = profile.fingerprint
+    conn.execute(
+        """
+        INSERT INTO embedding_profiles (
+            fingerprint, provider_id, model_name, model_revision, profile_epoch,
+            embedding_contract_version, dimension, normalized,
+            document_template_version, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(fingerprint) DO NOTHING
+        """,
+        (
+            fingerprint, profile.provider_id, profile.model_name,
+            profile.model_revision, profile.profile_epoch,
+            profile.embedding_contract_version, profile.dimension,
+            int(profile.normalized), profile.document_template_version, created_at,
+        ),
+    )
+    return fingerprint
+
+
+def upsert_memory_embedding(
+    conn: sqlite3.Connection, *, memory_id: str, profile: EmbeddingProfile,
+    content_hash: str, vector: list[float] | tuple[float, ...], embedded_at: str
+) -> None:
+    blob = encode_embedding(vector, profile.dimension)
+    conn.execute(
+        """
+        INSERT INTO memory_embeddings (
+            memory_id, profile_fingerprint, content_hash, embedding_blob, embedded_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(memory_id, profile_fingerprint) DO UPDATE SET
+            content_hash=excluded.content_hash,
+            embedding_blob=excluded.embedding_blob,
+            embedded_at=excluded.embedded_at
+        """,
+        (memory_id, profile.fingerprint, content_hash, blob, embedded_at),
+    )
+
+
+def embedding_profile_dimension(conn: sqlite3.Connection, fingerprint: str) -> int:
+    row = conn.execute(
+        "SELECT dimension FROM embedding_profiles WHERE fingerprint = ?", (fingerprint,)
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"unknown embedding profile: {fingerprint}")
+    return int(row[0])
+
+
+def active_embedding_blobs(
+    conn: sqlite3.Connection, fingerprint: str
+) -> list[tuple[str, bytes]]:
+    """Return only ids/vectors; ExactScan never loads Memory title or content."""
+    return [
+        (row[0], row[1])
+        for row in conn.execute(
+            """
+            SELECT me.memory_id, me.embedding_blob
+            FROM memory_embeddings me
+            JOIN memories m ON m.id = me.memory_id
+            WHERE me.profile_fingerprint = ? AND m.status = 'active'
+            ORDER BY me.memory_id
+            """,
+            (fingerprint,),
+        ).fetchall()
+    ]
 
 
 def upsert_raw_log(conn: sqlite3.Connection, *, id: str, text: str, source: str, created_at: str, file_path: str, processed_at: str | None) -> None:

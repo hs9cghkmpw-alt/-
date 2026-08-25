@@ -1,6 +1,6 @@
 # Vector Search Design（設計レビュー用）
 
-Status: **design review pending**
+Status: **Sprint 4A implemented; external review pending**
 
 Scope: Vector Searchの設計のみ。実装、`ask`、LLM回答生成、Contradiction Detection、
 Memory Consolidationは含まない。
@@ -144,11 +144,13 @@ type/topics/entities/links/statusは含めない。検索ranking用metadataや�
 | 外部vector DB | 水平拡張、運用機能 | server/認証/同期が必要でoffline・単一PC方針に過剰 | 採用しない |
 | JSON/float配列をMarkdownへ保存 | Vaultだけで完結 | Markdownを巨大な派生値で汚し、model交換時に大量差分 | 禁止 |
 
-推奨は、**SQLiteの通常tableをembedding cacheの管理面、sqlite-vecを検索面**とする。
-sqlite-vecだけを唯一の保存先にせず、profile/hash/生成状態を通常tableで検査可能にする。
-ただしvector値の二重永続化は避け、採用backendがsqlite-vecならvector本体は`vec0`、
-ExactScanBackendなら`memory_embeddings.embedding_blob`を使う。active backendはuser configが
-正本であり、SQLiteにはbuild済みbackend状態の派生写しだけを記録する。
+推奨は、**SQLiteの通常tableをcanonical embedding cache、sqlite-vecを検索index**とする。
+`memory_embeddings.embedding_blob`はbackendに関係なく常にcanonical float32 vectorを保持する。
+SqliteVecBackend採用時はvec0にもvectorが複製されるが、これは意図的な二重保存である。
+ExactScan↔sqlite-vec切替、provider停止中のbackend変更、remote embedding再課金の回避、
+vec0破損時のindexのみ再構築を優先する。embedding BLOBもvec0もSQLiteと共に消えてよい
+derived cacheであり、Markdown + user config + providerから完全再生成可能である。
+active backendはuser configが正本で、SQLiteにはbuild済みbackend状態の派生写しだけを記録する。
 
 sqlite-vec公式資料ではPyPI導入とWindows対応が案内されている一方、loadable extensionと
 Python同梱SQLiteの互換性は環境依存である。そのためSprint 1にWindows 11 + projectの
@@ -163,21 +165,24 @@ CREATE TABLE embedding_profiles (
     fingerprint TEXT PRIMARY KEY,
     provider_id TEXT NOT NULL,
     model_name TEXT NOT NULL,
-    model_revision TEXT NOT NULL,
+    model_revision TEXT NULL,
     dimension INTEGER NOT NULL CHECK (dimension > 0),
     normalized INTEGER NOT NULL CHECK (normalized IN (0, 1)),
     document_template_version INTEGER NOT NULL,
     embedding_contract_version INTEGER NOT NULL,
-    profile_epoch TEXT,
-    created_at TEXT NOT NULL
+    profile_epoch TEXT NULL,
+    created_at TEXT NOT NULL,
+    CHECK (
+        (model_revision IS NOT NULL AND trim(model_revision) != '' AND lower(trim(model_revision)) != 'unknown')
+        OR (profile_epoch IS NOT NULL AND trim(profile_epoch) != '' AND lower(trim(profile_epoch)) != 'unknown')
+    )
 );
 
 CREATE TABLE memory_embeddings (
     memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     profile_fingerprint TEXT NOT NULL REFERENCES embedding_profiles(fingerprint),
     content_hash TEXT NOT NULL,
-    embedding_blob BLOB,       -- ExactScanBackend時のみ。sqlite-vec時はNULL可
-    vector_key INTEGER,        -- vec0 row mapping。backend非依存APIの内部値
+    embedding_blob BLOB NOT NULL, -- 全backend共通canonical little-endian float32 cache
     embedded_at TEXT NOT NULL,
     PRIMARY KEY (memory_id, profile_fingerprint)
 );
@@ -207,12 +212,16 @@ ExactScanからsqlite-vecへ切り替えてもprofile fingerprintと既存embedd
 vector indexだけを再構築する。SQLite内stateとuser configが食い違う場合はuser configを正として
 stale扱いにし、暗黙にSQLiteの値をconfigへ書き戻さない。
 
+Python validationとDB CHECKの両方で、immutable `model_revision`または明示的な
+`profile_epoch`の最低1つを要求する。test fakeも固定`profile_epoch`を明示し、例外扱いしない。
+
 sqlite-vec tableはdimensionをDDLへ埋める必要があるため、active profile変更時に
 `memory_vector_index`をdrop/recreateする。正確な`vec0` DDLとtext primary key対応は
 採用versionをpinしたWindows spike後に確定する。SQL文字列生成はdimensionを整数検証し、
 任意文字列をidentifierへ展開しない。
 
-vectorはfloat32、cosine用にL2 normalizeを標準とする。dimension×4 bytes/Memoryに加え
+canonical BLOB encoding/decodingは単一moduleへ集約し、little-endian IEEE 754 float32、
+正確に`dimension * 4` bytes、全要素finiteを必須とする。vectorはcosine用にL2 normalizeを標準とする。dimension×4 bytes/Memoryに加え
 index overheadを容量見積りへ使う。SQLite DB全体が消えてもMarkdownから再生成できる。
 
 ## 6. Invalidationとmigration
@@ -443,6 +452,11 @@ Markdownの2つからembedding/vectorを同じ契約で再生成できる。
 - schema migration案をtest DBで実証。
 - sqlite-vecのWindows install/load/CRUD/KNN/rebuild benchmark。
 - Gate: sqlite-vec採用確定、またはExactScanを初期backendに切替。
+
+実測結果は`docs/SQLITE_VEC_WINDOWS_SPIKE.md`を参照。2026-08-25のWindows AMD64環境で
+sqlite-vec 0.1.9はPASSしたため、SqliteVecBackendをSprint 4B以降の候補とする。
+0.1.9ではvec0の更新は`UPDATE`ではなくdelete+insertをadapter内のupsert primitiveにする。
+core dependency化と本番adapter実装はこの判定には含めない。
 
 ### Sprint 4B — rebuildable embedding cache
 

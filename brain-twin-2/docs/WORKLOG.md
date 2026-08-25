@@ -65,3 +65,15 @@ Rules:
 - Commit: this commit
 - Known issues: 外部設計レビュー待ち。GO/完了判断は未実施。
 - Next: **Vector Search design review fixes implemented; external review pending**。
+
+## 2026-08-25 — Codex — Vector Search Sprint 4A
+
+- Branch: `brain-twin-dev`
+- Base: `205f3c384bc4db65bb9199aad7a2a020de1765bd`
+- Scope: provider/profile/backend contracts、canonical document/float32 cache、SQLite schema migration、ExactScan reference backend、Windows sqlite-vec spike。
+- Changed: provider SDK非依存contractとtyped errors、backend非依存fingerprint、canonical document/hash/BLOB validation、4 embedding tables、active vectorだけのexact cosine searchを追加。
+- Spike: Windows AMD64 / Python 3.12.10 / SQLite 3.49.1 / sqlite-vec 0.1.9でload/vec0/float32/cosine KNN/delete+insert/delete/rebuildをPASS。core requirementsには未追加。
+- Tests: 既存123件を維持し、Sprint 4A contract/storage tests 40件を追加。local `163 passed`。
+- CI: push後に確認予定。
+- Known issues: production provider、SqliteVecBackend本番adapter、sync/invalidation、Vector/Hybrid Searchは未実装。
+- Next: **Sprint 4A implemented; external review pending**。Sprint 4BへはレビューGO前に進まない。
