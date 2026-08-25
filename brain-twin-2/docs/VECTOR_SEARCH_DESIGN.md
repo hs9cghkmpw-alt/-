@@ -492,12 +492,21 @@ core dependency化と本番adapter実装はこの判定には含めない。
 hardening完了、外部レビューGO受領(2026-08-25)。production providerとSqliteVecBackendは
 意図的に未実装のまま。管理CLIは独立した`embeddings status/sync/rebuild`を採用し、通常
 `reindex`とは接続しない。GOと同時に見つかった、providerの問い合わせ中にMemoryが変更される
-とstale vectorがvalidとして保存されうるraceは、Sprint 4Cの一部として修正した(書き込み直前の
-short transactionでのcontent_hash再確認、staging activate直前の`ready == total_active`再確認)。
+とstale vectorがvalidとして保存されうるraceは、Sprint 4Cの一部として修正した。最初の修正
+(書き込み直前のshort transactionでのcontent_hash再確認)は「providerの問い合わせ中」の
+変更は検出できたが、「再確認の読み込み」と「実際の書き込み」の間にもごく短い窓が残って
+いたため、Sprint 4C final hardeningでこの再確認の読み込み自体を`BEGIN IMMEDIATE`で
+取得した書き込みlockの内側で行うように変更し、read-verify-writeを1つのtransaction境界に
+した(providerの問い合わせ自体はtransaction外のまま)。staging activate直前の
+`ready == total_active`再確認は維持している。
 
 ### Sprint 4C — vector and hybrid primary retrieval
 
-実装済み(外部レビュー待ち)。
+architecture(pure lexical channel、Vector availability gate、Weighted RRF、metadata
+multiplierの単一適用、lazy detail fetch、CLI opt-in、handoff protocol)はレビューで承認
+済み。embedding consistency raceの完全な原子化とHybrid lexical candidateの決定的
+tie-break(`ORDER BY score ASC, m.id ASC`、`db.search()`/`search.search()`は不変)を
+final hardeningとして実施(2026-08-25)。外部レビュー待ち。
 
 - `vector_search()`(availability gate + query embedding検証 + 本文遅延取得)、
   weighted RRF `hybrid_search()`、`RetrievalWeights`による中央weights。

@@ -121,11 +121,17 @@ class EmbeddingService:
                         items = provider_batch[commit_start : commit_start + self.policy.commit_batch_size]
                         vector_items = validated[commit_start : commit_start + self.policy.commit_batch_size]
                         try:
-                            # Re-read current Memory content in a short transaction right before
-                            # persisting is_valid=1. The provider call above can take a long time;
-                            # if another process changed this Memory's title/content while we were
-                            # waiting on the provider, the vector we just computed is for stale text
-                            # and must never be saved as valid (Sprint 4C consistency-race fix).
+                            # Acquire the write lock (BEGIN IMMEDIATE) *before* re-reading current
+                            # Memory content, so no other writer can change a row between our
+                            # re-verification read and our canonical-cache write below. The
+                            # provider call above stays outside any transaction (it can be slow);
+                            # only this short read-verify-write sequence holds the write lock
+                            # (Sprint 4C final hardening -- closes the remaining race window
+                            # between the re-read and the write that the previous round's
+                            # re-read-only fix left open). Guard against a redundant BEGIN in
+                            # case this connection is somehow already mid-transaction.
+                            if not conn.in_transaction:
+                                conn.execute("BEGIN IMMEDIATE")
                             current_rows = repository.memories_by_ids(
                                 conn, [item[0].memory_id for item in items]
                             )

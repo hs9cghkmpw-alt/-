@@ -134,3 +134,18 @@ Rules:
 - Commit: this commit.
 - Known issues: `SqliteVecBackend` production adapter and a real embedding provider are still not implemented (`ExactScanBackend` + fake/recording providers only); `--vector`/`--hybrid` therefore return a clear "provider is not installed"-style error outside tests until a production provider lands. `--related` cannot yet be combined with `--vector`/`--hybrid` (planned for Sprint 4D). The Sprint 4C implementation itself is unreviewed.
 - Next: **Sprint 4C (vector + hybrid primary retrieval) implemented; external review pending.** Do not begin Sprint 4D until this is reviewed and explicitly approved.
+
+## 2026-08-25 — Claude Code — Sprint 4C final hardening
+
+- Branch: `brain-twin-dev`
+- Base: `063c3a60beb30a7d6cc7f2191ea780869f177d7f`
+- Scope: user-instructed hardening on top of a Sprint 4C implementation that was reviewed and approved on architecture (Vector Search / Hybrid RRF / lazy detail fetch / availability gate / CLI / handoff protocol). Three fixes only; no Sprint 4D scope.
+- Changed:
+  1. **Fully atomic embedding consistency race close** (`brain_twin/embedding_service.py`): the prior round's fix re-read current Memory content right before writing `is_valid=1`, but that re-read was a plain `SELECT` — it did not itself hold the write lock, leaving a narrower race window between the re-read and the write where a second writer could still commit a change. Each commit-chunk write now issues `BEGIN IMMEDIATE` *before* the re-verification read (guarded against a redundant `BEGIN` if already mid-transaction), so canonical cache write + backend `sync_upsert` run inside one held write lock with no gap. The provider call itself remains outside any transaction. Any exception rolls back the whole chunk; the item is reprocessed by the next `sync()`.
+  2. **Deterministic lexical tie-break for Hybrid** (`brain_twin/db.py`): `search_lexical_candidates()` (Hybrid-only pure-BM25 API) now orders `ORDER BY score ASC, m.id ASC` instead of `ORDER BY score` alone, so tied `bm25()` scores no longer leave `lexical_rank` (and therefore RRF fusion / best-channel tie-break) non-deterministic. `db.search()` / `search.search()` (plain-search backward-compat path) are unchanged.
+  3. **Exact-SHA CI verification in `AGENTS.md`** (Section 7): replaced the "latest run on branch" `gh run list --limit 1` example with a loop that polls for the run whose `headSha` matches `git rev-parse HEAD`, and requires confirming that match before citing the run as evidence of CI success/failure.
+- Tests: existing 298 kept unchanged; 8 new (`test_embedding_service.py`: write-transaction-held contract test, a genuine second-connection lock-conflict test with `timeout=0` — no sleep/threads, hash-mismatch-skips-`sync_upsert`, canonical-write+backend-sync share one transaction, exception-rolls-back-canonical-write; `test_search.py`: lexical tie-break by `memory_id` ascending, stability across repeated calls, stability across `reindex`). Local `306 passed`.
+- CI: verified against the pushed commit SHA specifically (`headSha` match required before reporting); see commit line below.
+- Commit: this commit.
+- Known issues: same as the prior entry — `SqliteVecBackend` production adapter and a real embedding provider are still not implemented; `--related` still cannot combine with `--vector`/`--hybrid` (Sprint 4D). This hardening round itself is unreviewed.
+- Next: **Sprint 4C final hardening implemented; external review pending.** Do not begin Sprint 4D until this is reviewed and explicitly approved.

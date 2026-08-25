@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from brain_twin import db, search
+from brain_twin import db, memory_io, pipeline, search
+from brain_twin.models import Memory, MemoryStatus, MemoryType
 from brain_twin.retrieval_weights import metadata_multiplier
 
 FIXED_NOW = datetime(2026, 8, 25, tzinfo=timezone.utc)
@@ -130,6 +131,57 @@ def test_search_lexical_candidates_no_match_returns_empty(config):
         _memory(conn, "a", "totally unrelated content")
         conn.commit()
         assert db.search_lexical_candidates(conn, "nonexistent query text", limit=10) == []
+
+
+# ---- Sprint 4C final hardening: deterministic lexical tie-break for Hybrid ----
+
+
+def test_search_lexical_candidates_ties_are_broken_by_memory_id_ascending(config):
+    with db.connect(config) as conn:
+        # Identical content -> identical bm25 score; only memory_id must break the tie.
+        for memory_id in ["mem_c", "mem_a", "mem_b"]:
+            _memory(conn, memory_id, "identical tie break phrase content")
+        conn.commit()
+        candidates = db.search_lexical_candidates(conn, "identical tie break phrase", limit=10)
+
+    scores = {c.bm25_score for c in candidates}
+    assert len(scores) == 1  # confirms this is a genuine tie, not incidentally distinct scores
+    assert [c.memory_id for c in candidates] == ["mem_a", "mem_b", "mem_c"]
+    assert [c.lexical_rank for c in candidates] == [1, 2, 3]
+
+
+def test_search_lexical_candidates_tie_break_is_stable_across_repeated_calls(config):
+    with db.connect(config) as conn:
+        for memory_id in ["mem_c", "mem_a", "mem_b"]:
+            _memory(conn, memory_id, "identical repeat tie phrase content")
+        conn.commit()
+        first = [c.memory_id for c in db.search_lexical_candidates(conn, "identical repeat tie phrase", limit=10)]
+        second = [c.memory_id for c in db.search_lexical_candidates(conn, "identical repeat tie phrase", limit=10)]
+
+    assert first == second == ["mem_a", "mem_b", "mem_c"]
+
+
+def test_search_lexical_candidates_tie_break_survives_reindex(config):
+    # Written in an order whose incidental insertion/file order differs from id order, so a
+    # passing test actually exercises the explicit `m.id ASC` rule rather than coincidence.
+    for memory_id in ["mem_z", "mem_a", "mem_m"]:
+        memory_io.write_memory(config, Memory(
+            id=memory_id, type=MemoryType.THOUGHT,
+            created_at="2026-08-20T00:00:00+00:00", event_date="2026-08-20",
+            importance=3, confidence=1.0, source="test", status=MemoryStatus.ACTIVE,
+            title="reindex tie break phrase content", content="reindex tie break phrase content",
+            raw_log_id=None,
+        ))
+    assert pipeline.reindex(config)["memories"] == 3
+
+    with db.connect(config) as conn:
+        before = [c.memory_id for c in db.search_lexical_candidates(conn, "reindex tie break phrase", limit=10)]
+
+    assert pipeline.reindex(config)["memories"] == 3  # rebuild SQLite from Markdown again
+    with db.connect(config) as conn:
+        after = [c.memory_id for c in db.search_lexical_candidates(conn, "reindex tie break phrase", limit=10)]
+
+    assert before == after == ["mem_a", "mem_m", "mem_z"]
 
 
 # ---- Sprint 4C: lightweight ranking signal vs. full result detail ----

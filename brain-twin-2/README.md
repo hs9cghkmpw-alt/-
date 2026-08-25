@@ -653,10 +653,23 @@ top-K計算前にSQLで限定する。したがってsync前やprovider失敗中
   明確な未対応errorになる(黙ってlexicalの1-hop展開に切り替えたりしない)。
 - Sprint 4Bの実装中に見つかった**embedding consistency race**(providerへの問い合わせ中に
   Memoryのtitle/contentが変更されると、古い本文のvectorがvalidとして保存されてしまいうる問題)
-  もこのSprintで修正した。書き込み直前に短いtransaction内でMemoryを再読込し、現在の
-  content_hashと一致する場合だけvalid保存する。不一致ならそのまま何もせず、次回syncが
-  現在の本文を前提に再処理する。staging profileのactivate直前にも`ready == total_active`を
-  再確認し、レースで一部がskipされたまま不完全なindexがactiveになることを防ぐ。
+  もこのSprintで修正し、続くfinal hardeningでさらに完全に閉じた。最初の修正は書き込み直前に
+  Memoryを再読込し、現在のcontent_hashと一致する場合だけvalid保存する、というものだったが、
+  その再読込自体はただの`SELECT`で書き込みlockをまだ持っておらず、「再読込」と「書き込み」の
+  間にもごく短いrace windowが残っていた。final hardeningでは、この再読込の**前**に
+  `BEGIN IMMEDIATE`で書き込みlockを取得し、再読込・content_hash確認・canonical cache書き込み・
+  (incremental同期時は)backend `sync_upsert`を同じ1つのtransaction境界の中で行うことで、
+  この隙間も塞いだ。providerへの問い合わせそのものはtransaction外のまま(長時間lockを
+  保持しない)。content_hashが不一致(または対象MemoryがactiveでなくなっていたらNoneが返る)
+  場合は何も書き込まず、次回syncが現在の本文を前提に再処理する。staging profileのactivate
+  直前にも`ready == total_active`を再確認し、レースで一部がskipされたまま不完全なindexが
+  activeになることを防ぐ。
+- **Hybrid用lexical candidateのtie-break**(`db.search_lexical_candidates()`)も
+  final hardeningで決定的にした。以前は`ORDER BY score`のみで、`bm25()`スコアが同点の場合
+  (内容がほぼ同じMemory等)の順序が未規定だった。`lexical_rank`はWeighted RRFとHybridの
+  best-channel-rank tie-breakへ直接影響するため、`ORDER BY score ASC, m.id ASC`という
+  明示的なtie-breakを追加した。`db.search()`/`search.search()`(通常のlexical検索、後方互換
+  対象)は変更していない。
 
 production embedding provider(sentence-transformers/OpenAI/Ollama等)と`SqliteVecBackend`本番
 adapterはSprint 4Cでも意図的に未実装のまま(`ExactScanBackend` + fake/recording providerのみで

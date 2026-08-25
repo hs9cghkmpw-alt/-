@@ -1,4 +1,5 @@
 import math
+import sqlite3
 from dataclasses import replace
 
 import pytest
@@ -539,6 +540,136 @@ def test_concurrent_change_during_new_profile_sync_blocks_staging_activation(con
     assert final.active_switched
     with db.connect(config) as conn:
         assert repository.active_profile_fingerprint(conn) == resumed.profile.fingerprint
+
+
+# ---- Sprint 4C final hardening: close the read-then-write race with BEGIN IMMEDIATE ----
+#
+# The previous round re-read current Memory content right before writing, but that read was
+# a plain SELECT -- it did not itself hold the write lock, so another writer could still slip
+# in between our SELECT and our INSERT. These tests prove the write lock (BEGIN IMMEDIATE) is
+# already held *before* that re-verification read runs, so the read-verify-write sequence is
+# now genuinely atomic. No real-time sleep/threading is used.
+
+
+def test_write_transaction_is_open_before_the_reverification_read(config, monkeypatch):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    real_memories_by_ids = repository.memories_by_ids
+    seen = {"in_transaction": None}
+
+    def spy(conn, memory_ids):
+        seen["in_transaction"] = conn.in_transaction
+        return real_memories_by_ids(conn, memory_ids)
+
+    monkeypatch.setattr(repository, "memories_by_ids", spy)
+    _service(config, RecordingProvider()).sync()
+    assert seen["in_transaction"] is True
+
+
+def test_second_connection_write_is_blocked_during_reverification_transaction(config, monkeypatch):
+    """Stronger than the flag check above: a second real connection attempting to write the
+    same row while our transaction is open must fail immediately (timeout=0, no sleep),
+    proving the write lock is genuinely held at read time, not just about to be acquired."""
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    real_memories_by_ids = repository.memories_by_ids
+    observed = {"blocked": False}
+
+    def spy(conn, memory_ids):
+        result = real_memories_by_ids(conn, memory_ids)
+        second = sqlite3.connect(str(config.db_path), timeout=0)
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                second.execute("UPDATE memories SET title = 'raced' WHERE id = 'a'")
+            observed["blocked"] = True
+        finally:
+            second.close()
+        return result
+
+    monkeypatch.setattr(repository, "memories_by_ids", spy)
+    _service(config, RecordingProvider()).sync()
+    assert observed["blocked"] is True
+
+
+def test_hash_mismatch_does_not_call_backend_sync_upsert(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    backend = TrackingBackend()
+    _service(config, RecordingProvider(), backend).sync()  # activate profile+backend first
+    backend.sync_upserts.clear()
+
+    racing = ContentChangingProvider(config, "a", {"content": "changed-during-embed"})
+    _service(config, racing, backend).sync()
+    assert backend.sync_upserts == []
+
+
+def test_canonical_write_and_backend_sync_share_the_same_transaction(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+
+    seen = {"in_transaction_at_sync_upsert": None, "canonical_row_at_sync_upsert": None}
+
+    class AssertingBackend(ExactScanBackend):
+        def sync_upsert(self, conn, memory_id, profile_fingerprint, vector):
+            seen["in_transaction_at_sync_upsert"] = conn.in_transaction
+            seen["canonical_row_at_sync_upsert"] = conn.execute(
+                "SELECT count(*) FROM memory_embeddings WHERE memory_id = ? AND is_valid = 1",
+                (memory_id,),
+            ).fetchone()[0]
+            return super().sync_upsert(conn, memory_id, profile_fingerprint, vector)
+
+    backend = AssertingBackend()
+    provider = RecordingProvider()
+    _service(config, provider, backend).sync()  # first sync activates -> not incremental yet
+    with db.connect(config) as conn:
+        _memory(conn, "a", content="changed"); conn.commit()
+    _service(config, provider, backend).sync()  # second sync is incremental -> exercises sync_upsert
+
+    # sync_upsert ran inside the same open write transaction as the canonical write, and the
+    # canonical row was already committed-within-transaction (visible to this same conn) by
+    # the time backend sync ran, proving both share one transaction boundary.
+    assert seen["in_transaction_at_sync_upsert"] is True
+    assert seen["canonical_row_at_sync_upsert"] == 1
+
+
+def test_exception_during_backend_sync_rolls_back_canonical_write(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    backend = TrackingBackend()
+    _service(config, RecordingProvider(), backend).sync()  # activate profile+backend, embeds "a"
+    with db.connect(config) as conn:
+        original_hash = conn.execute(
+            "SELECT content_hash FROM memory_embeddings WHERE memory_id = 'a'"
+        ).fetchone()[0]
+
+    class FailingSyncBackend(TrackingBackend):
+        def sync_upsert(self, conn, memory_id, profile_fingerprint, vector):
+            raise RuntimeError("simulated backend failure")
+
+    # Reuse the already-active profile/backend id+schema so this sync takes the incremental
+    # (sync_upsert-calling) path rather than the initial staging-build path.
+    with db.connect(config) as conn:
+        _memory(conn, "a", content="changed-again"); conn.commit()
+    with pytest.raises(RuntimeError):
+        _service(config, RecordingProvider(), FailingSyncBackend()).sync()
+
+    with db.connect(config) as conn:
+        row = conn.execute(
+            "SELECT content_hash, is_valid FROM memory_embeddings WHERE memory_id = 'a'"
+        ).fetchone()
+    # Rollback must have reverted the failed sync's canonical write entirely: the row still
+    # reflects the last successfully committed state before this sync attempt -- the original
+    # hash, invalidated (is_valid=0) by the earlier, separately-committed content-change
+    # trigger -- not the failed attempt's new hash marked valid.
+    assert row == (original_hash, 0)
+
+    # Retrying with a working backend recovers cleanly.
+    result = _service(config, RecordingProvider(), backend).sync()
+    assert result.embedded == 1
+    with db.connect(config) as conn:
+        assert conn.execute(
+            "SELECT is_valid FROM memory_embeddings WHERE memory_id = 'a'"
+        ).fetchone()[0] == 1
 
 
 def test_failed_stale_reembedding_stays_unsearchable_then_success_restores(config):

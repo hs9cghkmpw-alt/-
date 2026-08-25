@@ -802,6 +802,17 @@ class LexicalCandidate:
 def search_lexical_candidates(
     conn: sqlite3.Connection, query: str, *, limit: int
 ) -> list[LexicalCandidate]:
+    """Hybrid-only candidate API (Sprint 4C final hardening: deterministic tie-break).
+
+    `bm25()` scores can legitimately tie (short/duplicate content, identical term
+    frequencies). `lexical_rank` feeds directly into Weighted RRF and into Hybrid's
+    best-channel-rank tie-break, so an unordered tie there would make Hybrid results
+    non-deterministic across otherwise-identical calls. `m.id ASC` breaks ties explicitly
+    and stably, independent of SQLite's incidental physical row order (which `reindex`'s
+    file-listing order does not guarantee to reproduce).
+
+    `db.search()` (used by `search.search()`) is unaffected -- it keeps its own `ORDER BY
+    rank` unchanged for backward compatibility; this function is Hybrid-only."""
     if limit <= 0:
         return []
     phrase = '"' + query.replace('"', '""') + '"'
@@ -811,7 +822,7 @@ def search_lexical_candidates(
         FROM memories_fts
         JOIN memories m ON m.id = memories_fts.memory_id
         WHERE memories_fts MATCH ? AND m.status = 'active'
-        ORDER BY score
+        ORDER BY score ASC, m.id ASC
         LIMIT ?
         """,
         (phrase, limit),

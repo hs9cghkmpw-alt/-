@@ -132,17 +132,40 @@ A task is not complete until the agent has:
 10. Pushed to the correct branch.
 11. When GitHub CLI is available, verified GitHub Actions through `gh` and did not report completion while CI is failing.
 
+### Exact-SHA CI verification (required)
+
+Do not verify CI by grabbing "the latest run" for the branch — a concurrent push (yours from a retry, another agent, or a human) can make the newest run correspond to a different commit than the one you actually pushed. Always confirm the run's `headSha` equals the SHA you pushed before reporting success or failure.
+
 Recommended CI flow on the current Windows development machine:
 
 ```powershell
-gh run list --branch brain-twin-dev --limit 5
-$RunId = gh run list --branch brain-twin-dev --limit 1 --json databaseId --jq '.[0].databaseId'
+$Sha = git rev-parse HEAD
+$RunId = $null
+
+1..12 | ForEach-Object {
+    if (-not $RunId) {
+        $RunId = gh run list --branch brain-twin-dev --limit 20 `
+          --json databaseId,headSha `
+          --jq ".[] | select(.headSha == `"$Sha`") | .databaseId" |
+          Select-Object -First 1
+
+        if (-not $RunId) {
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
+if (-not $RunId) {
+    throw "No Actions run found for pushed SHA $Sha; do not report CI success using an older run."
+}
+
 gh run watch $RunId --exit-status
+gh run view $RunId --json databaseId,headSha,status,conclusion
 # On failure:
 gh run view $RunId --log-failed
 ```
 
-If CI fails, diagnose, fix, retest, commit/push, and verify the new CI run before reporting completion.
+Confirm `headSha` in the final `gh run view` output equals `$Sha` before citing the run as evidence of success or failure. If CI fails, diagnose, fix, retest, commit/push, and re-run this exact-SHA lookup against the *new* SHA before reporting completion — never reuse a run ID from a previous SHA.
 
 ## 8. WORKLOG entry format
 
