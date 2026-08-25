@@ -120,6 +120,8 @@ CREATE TABLE IF NOT EXISTS links (
     UNIQUE (source_memory_id, target_memory_id, relation_type)
 );
 
+CREATE INDEX IF NOT EXISTS idx_links_target_memory ON links (target_memory_id);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     memory_id UNINDEXED,
     title,
@@ -423,6 +425,22 @@ class LinkRow:
     reason: str
 
 
+@dataclass(frozen=True)
+class RelatedLinkRow:
+    """A one-hop link plus the active memory at its opposite endpoint."""
+
+    primary_memory_id: str
+    memory_id: str
+    title: str
+    content: str
+    type: str
+    event_date: str
+    importance: int
+    relation_type: str
+    reason: str
+    direction: str
+
+
 def links_for_memory(conn: sqlite3.Connection, memory_id: str) -> list[LinkRow]:
     """source側から見たリンクのみを返す(このMemoryが起点になっているもの)。"""
     rows = conn.execute(
@@ -430,6 +448,96 @@ def links_for_memory(conn: sqlite3.Connection, memory_id: str) -> list[LinkRow]:
         (memory_id,),
     ).fetchall()
     return [LinkRow(target_memory_id=r[0], relation_type=r[1], reason=r[2]) for r in rows]
+
+
+def outgoing_links_for_memory(conn: sqlite3.Connection, memory_id: str) -> list[RelatedLinkRow]:
+    """Return outgoing links whose target memory is active."""
+    return _related_links(conn, [memory_id], direction="outgoing")
+
+
+def incoming_links_for_memory(conn: sqlite3.Connection, memory_id: str) -> list[RelatedLinkRow]:
+    """Return incoming links whose source memory is active."""
+    return _related_links(conn, [memory_id], direction="incoming")
+
+
+def related_links_for_memories(conn: sqlite3.Connection, memory_ids: list[str]) -> list[RelatedLinkRow]:
+    """Return incoming and outgoing one-hop links for a set of primary memories."""
+    if not memory_ids:
+        return []
+    rows: list[RelatedLinkRow] = []
+    for batch in _chunked(memory_ids):
+        rows.extend(_related_links(conn, batch, direction="outgoing"))
+        rows.extend(_related_links(conn, batch, direction="incoming"))
+    return rows
+
+
+def _related_links(
+    conn: sqlite3.Connection, memory_ids: list[str], *, direction: str
+) -> list[RelatedLinkRow]:
+    if not memory_ids:
+        return []
+    placeholders = ",".join("?" for _ in memory_ids)
+    if direction == "outgoing":
+        primary_column = "l.source_memory_id"
+        related_column = "l.target_memory_id"
+    elif direction == "incoming":
+        primary_column = "l.target_memory_id"
+        related_column = "l.source_memory_id"
+    else:
+        raise ValueError(f"unknown link direction: {direction}")
+    records = conn.execute(
+        f"""
+        SELECT {primary_column}, m.id, m.title, m.content, m.type,
+               m.event_date, m.importance, l.relation_type, l.reason
+        FROM links l
+        JOIN memories m ON m.id = {related_column}
+        WHERE {primary_column} IN ({placeholders}) AND m.status = 'active'
+        ORDER BY {primary_column}, m.id, l.relation_type, l.id
+        """,
+        memory_ids,
+    ).fetchall()
+    return [RelatedLinkRow(*row, direction=direction) for row in records]
+
+
+@dataclass(frozen=True)
+class TimelineRow:
+    memory_id: str
+    title: str
+    content: str
+    type: str
+    event_date: str
+    importance: int
+    confidence: float
+
+
+def timeline_memories(
+    conn: sqlite3.Connection,
+    *,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    limit: int = 100,
+) -> list[TimelineRow]:
+    """Filter active long-term memories by inclusive event-date bounds in SQL."""
+    clauses = ["status = 'active'"]
+    params: list[str | int] = []
+    if from_date is not None:
+        clauses.append("event_date >= ?")
+        params.append(from_date)
+    if to_date is not None:
+        clauses.append("event_date <= ?")
+        params.append(to_date)
+    params.append(limit)
+    rows = conn.execute(
+        f"""
+        SELECT id, title, content, type, event_date, importance, confidence
+        FROM memories
+        WHERE {' AND '.join(clauses)}
+        ORDER BY event_date ASC, created_at ASC, id ASC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+    return [TimelineRow(*row) for row in rows]
 
 
 def search(conn: sqlite3.Connection, query: str, *, limit: int = 20) -> list[SearchHit]:

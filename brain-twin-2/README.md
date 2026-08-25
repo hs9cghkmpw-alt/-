@@ -1,4 +1,4 @@
-# Brain Twin 2.0 — Phase 1 + Phase 2: Memory Foundation & Automatic Memory Worker
+# Brain Twin 2.0 — Phase 1–3: Memory Foundation, Automatic Memory Worker & Retrieval
 
 > スマホでは思ったことを呟くだけ。PC側で自動整理し、Obsidianに長期記憶として保存し、
 > 必要なときにAIが検索・連想・比較して思い出せる第二の脳。
@@ -45,6 +45,30 @@ pytest tests/ -q
 python brain.py add "今日はBrain Twinの設計について考えた"
 python brain.py process
 python brain.py search "Brain Twin"
+```
+
+### Phase 3 Retrieval
+
+通常の `search` は従来どおり、FTS5 と importance / confidence / recency による
+Primary Memory のみを返します。`--related` を付けると、各 Primary から保存済みLinkを
+1-hopだけ辿り、関連Memoryを別枠で表示します。Phase 2のLinkは一方向保存ですが、検索時は
+outgoing / incoming の両方向を探索します。
+
+```bash
+python brain.py search "Brain Twin"
+python brain.py search "Brain Twin" --related
+python brain.py search "Brain Twin" --related --related-limit 20
+```
+
+Timeline Search はLong-term Memoryの `event_date` を基準に、activeなMemoryを日付昇順で
+一覧します。境界日は含まれ、`--from` または `--to` の片方だけでも指定できます。
+日付を省略するとactiveなMemoryを全期間から一覧します。
+
+```bash
+python brain.py timeline --from 2026-08-01 --to 2026-08-31
+python brain.py timeline --from 2026-08-01
+python brain.py timeline --to 2026-08-31
+python brain.py timeline
 ```
 
 - `add` — 思ったことをそのまま記録するだけ。整理はしない(指示書2章「ユーザーに整理させない」)。

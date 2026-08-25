@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from brain_twin import pipeline, search
+from brain_twin import pipeline, retrieval, search
 from brain_twin.config import load_config
 
 
@@ -42,7 +42,18 @@ def _cmd_process(args: argparse.Namespace) -> int:
 
 def _cmd_search(args: argparse.Namespace) -> int:
     config = load_config()
-    results = search.search_with_config(config, args.query, limit=args.limit)
+    if args.related:
+        try:
+            retrieval_result = retrieval.retrieve_with_config(
+                config, args.query, primary_limit=args.limit, related_limit=args.related_limit
+            )
+        except ValueError as exc:
+            print(f"[NG] {exc}", file=sys.stderr)
+            return 1
+        results = retrieval_result.primary
+    else:
+        retrieval_result = None
+        results = search.search_with_config(config, args.query, limit=args.limit)
 
     if not results:
         print("該当するMemoryが見つかりませんでした。")
@@ -57,6 +68,42 @@ def _cmd_search(args: argparse.Namespace) -> int:
             snippet = r.content if len(r.content) <= 120 else r.content[:120] + "…"
             print(f"  {snippet}")
         print(f"  id={r.memory_id}")
+        print()
+    if retrieval_result is not None and retrieval_result.related:
+        print("関連Memory:")
+        for item in retrieval_result.related:
+            print(f"[{item.event_date}] ({item.type}) {item.title}")
+            print(f"  id={item.memory_id}")
+            for relation in item.relations:
+                print(
+                    f"  <- {relation.primary_memory_id} "
+                    f"({relation.direction} / {relation.relation_type}): {relation.reason}"
+                )
+            if args.verbose:
+                snippet = item.content if len(item.content) <= 120 else item.content[:120] + "…"
+                print(f"  {snippet}")
+            print()
+    return 0
+
+
+def _cmd_timeline(args: argparse.Namespace) -> int:
+    config = load_config()
+    try:
+        results = search.timeline_with_config(
+            config, from_date=args.from_date, to_date=args.to_date, limit=args.limit
+        )
+    except ValueError as exc:
+        print(f"[NG] {exc}", file=sys.stderr)
+        return 1
+    if not results:
+        print("該当するMemoryが見つかりませんでした。")
+        return 0
+    for item in results:
+        print(f"[{item.event_date}] ({item.type}) {item.title}")
+        if args.verbose:
+            snippet = item.content if len(item.content) <= 120 else item.content[:120] + "…"
+            print(f"  {snippet}")
+        print(f"  id={item.memory_id}")
         print()
     return 0
 
@@ -73,7 +120,7 @@ def _cmd_reindex(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="brain.py", description="Brain Twin 2.0 (Phase 1: Memory Foundation)")
+    parser = argparse.ArgumentParser(prog="brain.py", description="Brain Twin 2.0 (Phase 3: Retrieval)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_add = sub.add_parser("add", help="思ったことをそのまま記録する(整理はしない)")
@@ -88,8 +135,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_search = sub.add_parser("search", help="Memoryを検索する")
     p_search.add_argument("query", help="検索キーワード")
     p_search.add_argument("--limit", type=int, default=10)
+    p_search.add_argument("--related", action="store_true", help="1-hopの関連Memoryも表示する")
+    p_search.add_argument("--related-limit", type=int, default=retrieval.DEFAULT_RELATED_LIMIT)
     p_search.add_argument("-v", "--verbose", action="store_true", help="本文の抜粋も表示する")
     p_search.set_defaults(func=_cmd_search)
+
+    p_timeline = sub.add_parser("timeline", help="event_dateでMemoryを一覧する")
+    p_timeline.add_argument("--from", dest="from_date", help="開始日 (YYYY-MM-DD、境界を含む)")
+    p_timeline.add_argument("--to", dest="to_date", help="終了日 (YYYY-MM-DD、境界を含む)")
+    p_timeline.add_argument("--limit", type=int, default=100)
+    p_timeline.add_argument("-v", "--verbose", action="store_true", help="本文の抜粋も表示する")
+    p_timeline.set_defaults(func=_cmd_timeline)
 
     p_reindex = sub.add_parser("reindex", help="SQLite indexをVaultのMarkdownから作り直す")
     p_reindex.set_defaults(func=_cmd_reindex)
