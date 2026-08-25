@@ -267,6 +267,13 @@ brain_twin/
   retrieval.py            # Primary受取後の既存1-hop policy
 ```
 
+canonical embedding cacheの保存・更新・削除はDB repositoryと将来のservice層の責務とする。
+`VectorIndexBackend`のmutation APIは派生search indexだけを同期する
+`sync_upsert()` / `sync_delete()` / `clear_index()`であり、canonical BLOBを変更しない。
+将来のserviceはcanonical cacheを先にtransaction方針に従って変更し、その後backend indexを
+同期する。ExactScanは独立indexを持たないため3操作がno-op、SqliteVecBackendではvec0へ反映する。
+rebuildはcanonical cacheからbackend indexを再構築し、providerの再実行を要求しない。
+
 公開API案:
 
 ```python

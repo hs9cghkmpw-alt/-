@@ -311,6 +311,16 @@ def upsert_memory_embedding(
     )
 
 
+def delete_memory_embedding(
+    conn: sqlite3.Connection, *, memory_id: str, profile_fingerprint: str
+) -> None:
+    """Delete a canonical cache row; VectorIndexBackend mutations never perform this step."""
+    conn.execute(
+        "DELETE FROM memory_embeddings WHERE memory_id = ? AND profile_fingerprint = ?",
+        (memory_id, profile_fingerprint),
+    )
+
+
 def embedding_profile_dimension(conn: sqlite3.Connection, fingerprint: str) -> int:
     row = conn.execute(
         "SELECT dimension FROM embedding_profiles WHERE fingerprint = ?", (fingerprint,)

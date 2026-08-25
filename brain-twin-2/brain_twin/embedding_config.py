@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 from brain_twin.embedding_provider import EmbeddingConfigurationError, EmbeddingProfile
 
 CONFIG_ENV = "BRAIN_TWIN_CONFIG"
-_SECRET_NAMES = {"api_key", "token", "password", "secret", "client_secret"}
+_SECRET_TOKENS = {"token", "secret", "password", "passwd", "credential", "credentials"}
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,7 @@ def load_embedding_settings(path: Path) -> EmbeddingSettings:
 def _reject_secrets(value: object) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
-            if key.casefold() in _SECRET_NAMES:
+            if _is_credential_key(key):
                 raise EmbeddingConfigurationError(
                     f"secret field {key!r} must use environment or an OS credential store"
                 )
@@ -67,3 +68,13 @@ def _reject_secrets(value: object) -> None:
     elif isinstance(value, list):
         for child in value:
             _reject_secrets(child)
+
+
+def _is_credential_key(key: str) -> bool:
+    """Recognize credential field names without matching words such as tokenizer/secretary."""
+    # Split camelCase before treating punctuation (underscore, dash, dot, etc.) uniformly.
+    separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key).casefold()
+    tokens = tuple(token for token in re.split(r"[^a-z0-9]+", separated) if token)
+    if any(token in _SECRET_TOKENS for token in tokens):
+        return True
+    return any(left == "api" and right == "key" for left, right in zip(tokens, tokens[1:]))

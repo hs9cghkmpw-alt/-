@@ -123,3 +123,25 @@ def test_exact_build_uses_canonical_cache_without_provider(config):
         _memory(conn, "mem_1"); _embedding(conn, profile, "mem_1", [1, 0])
         assert backend.build(conn, profile.fingerprint) == 1
         assert backend.search(conn, profile.fingerprint, [1, 0], limit=1)[0].memory_id == "mem_1"
+
+
+def test_exact_backend_sync_lifecycle_keeps_canonical_cache_in_repository(config):
+    profile = _profile(); backend = ExactScanBackend()
+    with db.connect(config) as conn:
+        db.upsert_embedding_profile(conn, profile, created_at="now")
+        _memory(conn, "mem_1"); _embedding(conn, profile, "mem_1", [1, 0])
+
+        backend.sync_upsert(conn, "mem_1", profile.fingerprint, [1, 0])
+        assert backend.search(conn, profile.fingerprint, [1, 0], limit=1)[0].memory_id == "mem_1"
+
+        backend.clear_index(conn)
+        assert conn.execute(
+            "SELECT count(*) FROM memory_embeddings WHERE memory_id = 'mem_1'"
+        ).fetchone()[0] == 1
+        assert backend.search(conn, profile.fingerprint, [1, 0], limit=1)[0].memory_id == "mem_1"
+
+        db.delete_memory_embedding(
+            conn, memory_id="mem_1", profile_fingerprint=profile.fingerprint
+        )
+        backend.sync_delete(conn, "mem_1")
+        assert backend.search(conn, profile.fingerprint, [1, 0], limit=1) == []

@@ -12,6 +12,12 @@ from brain_twin.vector_index import VectorSearchResult
 
 
 class ExactScanBackend:
+    """Index adapter with no separate index; sync operations intentionally do nothing.
+
+    Search reads the repository-owned canonical cache.  Callers must mutate that cache before
+    calling sync_upsert/sync_delete; none of these backend methods changes canonical BLOBs.
+    """
+
     backend_id = "exact_scan"
     schema_version = 1
 
@@ -22,7 +28,7 @@ class ExactScanBackend:
             decode_embedding(blob, dimension)
         return len(rows)
 
-    def upsert(
+    def sync_upsert(
         self, conn: sqlite3.Connection, memory_id: str,
         profile_fingerprint: str, vector: Sequence[float]
     ) -> None:
@@ -31,11 +37,11 @@ class ExactScanBackend:
         # Canonical cache was written by the repository first; ExactScan has no second index.
         return None
 
-    def delete(self, conn: sqlite3.Connection, memory_id: str) -> None:
+    def sync_delete(self, conn: sqlite3.Connection, memory_id: str) -> None:
         # No backend-specific index exists. Canonical cache lifecycle belongs to db.py.
         return None
 
-    def clear(self, conn: sqlite3.Connection) -> None:
+    def clear_index(self, conn: sqlite3.Connection) -> None:
         # ExactScan is a view over canonical cache and has no separate state to clear.
         return None
 

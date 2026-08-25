@@ -18,15 +18,16 @@ Last updated: 2026-08-25
   - Timeline Search (`event_date` range filtering): **implemented**
   - Final hardening review: **complete**
 - Phase 4 — Vector Search:
-  - Sprint 4A contracts / canonical cache / ExactScan / Windows storage spike: **implemented**
+  - Sprint 4A contracts / canonical cache / ExactScan / Windows storage spike: **implemented and hardened**
   - Status: **external review pending**
+  - Hardening local tests: **180 passed**
 
 ## Last known good implementation
 
-- Implementation commit: `e199bb2` (see Git history for full SHA)
-- Commit title: `brain-twin-2: preserve link strength in retrieval`
-- Local test count: **123 passed**
-- GitHub Actions run: `32801919294`
+- Implementation commit: `c12d01981190edf7cbe01f58377b051d6dd87c2b`
+- Commit title: `brain-twin-2: implement vector search Sprint 4A`
+- Local test count: **163 passed**
+- GitHub Actions run: `32807083539`
 - GitHub Actions result: **success**
 
 ## Completed review fixes — verify before Vector Search
@@ -48,7 +49,7 @@ outgoing/incoming、inactive除外、1-hop、決定的順序は維持する。
 
 ## Next authorized task
 
-**Sprint 4A implemented; external review pending.**
+**Sprint 4A hardening implemented; external review pending.**
 
 Do **not** begin Sprint 4B until this implementation is reviewed and explicitly approved.
 LLM integration, `ask`, Contradiction Detection, Memory Consolidation, and smartphone integration remain out of scope.

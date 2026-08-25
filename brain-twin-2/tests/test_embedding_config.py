@@ -32,8 +32,36 @@ def test_config_override_and_profile_backend_separation(tmp_path):
     assert settings.profile.fingerprint
 
 
-def test_plaintext_secret_field_is_rejected(tmp_path):
+@pytest.mark.parametrize("key", [
+    "api_key", "api-key", "apiKey", "openai_api_key", "secret_key",
+    "access_token", "refresh_token", "auth_token", "bearer_token",
+    "password", "passwd", "client_secret", "clientSecret",
+])
+def test_plaintext_credential_field_is_rejected(tmp_path, key):
     path = tmp_path / "config.toml"
-    path.write_text(CONFIG + '\napi_key = "must-not-be-here"\n', encoding="utf-8")
+    path.write_text(CONFIG + f'\n[unknown]\n"{key}" = "sensitive-value"\n', encoding="utf-8")
     with pytest.raises(EmbeddingConfigurationError):
         load_embedding_settings(path)
+
+
+def test_plaintext_credential_is_rejected_in_nested_unknown_table(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG + '\n[unknown.deep]\naccess_token = "sensitive-value"\n', encoding="utf-8")
+    with pytest.raises(EmbeddingConfigurationError):
+        load_embedding_settings(path)
+
+
+@pytest.mark.parametrize("key", ["tokenizer", "secretary"])
+def test_unrelated_field_name_is_not_misidentified_as_credential(tmp_path, key):
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG + f'\n[unknown]\n{key} = "ordinary-value"\n', encoding="utf-8")
+    assert load_embedding_settings(path).profile.provider_id == "local"
+
+
+def test_credential_error_does_not_include_secret_value(tmp_path):
+    secret_value = "do-not-echo-this-value"
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG + f'\n[unknown]\naccess_token = "{secret_value}"\n', encoding="utf-8")
+    with pytest.raises(EmbeddingConfigurationError) as exc_info:
+        load_embedding_settings(path)
+    assert secret_value not in str(exc_info.value)

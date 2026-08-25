@@ -561,6 +561,12 @@ Windows spikeはsqlite-vec 0.1.9でPASSしたが、core dependency化や本番Sq
 Vector/Hybrid Searchはまだ実装していない。詳細は`docs/VECTOR_SEARCH_DESIGN.md`と
 `docs/SQLITE_VEC_WINDOWS_SPIKE.md`を参照。
 
+Vector backendのmutationはcanonical BLOBではなく派生indexだけを対象とし、API名も
+`sync_upsert` / `sync_delete` / `clear_index`として区別する。ExactScanは独立indexを
+持たないためこれらはno-opで、canonical cacheのlife cycleはDB repository側が管理する。
+Embedding user configはseparator/camelCaseを正規化したcredential key検査を行い、未知の
+nested fieldであってもAPI key/token/password/secret類の平文保存を拒否する。
+
 指示書のPhase 2の残り(自動ラベリングの高度化、より高度なEntity抽出)、および
 Phase 3以降: Contradiction Detection・Memory Consolidation・Vector Search・
 LLM Provider Interface・スマホ連携・`ask`コマンド、など。

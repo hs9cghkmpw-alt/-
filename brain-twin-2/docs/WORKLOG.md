@@ -77,3 +77,15 @@ Rules:
 - CI: push後に確認予定。
 - Known issues: production provider、SqliteVecBackend本番adapter、sync/invalidation、Vector/Hybrid Searchは未実装。
 - Next: **Sprint 4A implemented; external review pending**。Sprint 4BへはレビューGO前に進まない。
+
+## 2026-08-25 — Codex — Vector Search Sprint 4A final hardening
+
+- Branch: `brain-twin-dev`
+- Base: `c12d01981190edf7cbe01f58377b051d6dd87c2b`
+- Scope: plaintext credential key検出強化とVectorIndexBackend mutation lifecycle明確化のみ。
+- Changed: separator/camelCaseをtoken化してnested/unknown fieldのcredential名を拒否。Backend APIを`sync_upsert` / `sync_delete` / `clear_index`へ変更し、canonical cacheを変更しない派生index操作として明文化。
+- Tests: 既存163件を維持し、hardening cases 17件を追加。local `180 passed`。
+- CI: push後に確認予定。
+- Commit: this commit。
+- Known issues: production provider、SqliteVecBackend、embedding orchestration、Vector/Hybrid Searchは未実装。
+- Next: **Sprint 4A hardening implemented; external review pending**。Sprint 4Bへは進めない。
