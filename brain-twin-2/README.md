@@ -95,18 +95,19 @@ python brain.py timeline
 Vaultは既定で `brain-twin-2/vault/` に作成されます。**Obsidianでこのフォルダを開くと**、
 Daily Log・Memory・メタデータ(frontmatter)を人間が普通に閲覧できます。
 
-### Sprint 4C: Vector / Hybrid Primary Search(外部レビュー待ち)
+### Sprint 4C/4D: Vector / Hybrid Primary Search(外部レビュー待ち)
 
 `search` に `--vector` / `--hybrid` を付けると、通常のFTS5 lexical検索の代わりに
 Vector Primary SearchまたはHybrid Primary Search(lexical + vectorのWeighted
-Reciprocal Rank Fusion)を使う。両者は互いに排他(argparseレベルで拒否)で、
-`--related`(Sprint 3のAssociative Retrieval)との併用もまだ明確な未対応errorになる
-(Associative Retrievalとの統合はSprint 4D予定)。
+Reciprocal Rank Fusion)を使う。両者は互いに排他(argparseレベルで拒否)。
+`--related`(Sprint 3のAssociative Retrieval)は Sprint 4D で `--vector`/`--hybrid`
+と併用できるようになった(`retrieval.retrieve_from_primary()`が共通の1-hop展開を担う)。
 
 ```bash
 python brain.py search "Brain Twin" --vector
 python brain.py search "Brain Twin" --hybrid
 python brain.py search "Brain Twin" --hybrid --verbose  # fusion/metadata_multiplier等の内訳も表示
+python brain.py search "Brain Twin" --hybrid --related  # Hybrid Primary + 1-hop関連Memory
 ```
 
 Vector系検索は、user configで選んだembedding profileがSQLite上でactiveかつ、選択した
@@ -648,9 +649,6 @@ top-K計算前にSQLで限定する。したがってsync前やprovider失敗中
   ranking自体は軽量なimportance/confidence/event_dateだけで行い、確定した上位N件のIDにだけ
   title/content/topics/entitiesを取得する(候補全件の本文を読み込まない)。同点はfinal_score→
   best channel rank→event_date→memory_idの順で決定的に解決する。
-- どちらも**まだAssociative Retrieval(`--related`)と統合していない**(Sprint 4Dで
-  `retrieve_from_primary()`へ接続予定)。`search --vector --related` / `--hybrid --related`は
-  明確な未対応errorになる(黙ってlexicalの1-hop展開に切り替えたりしない)。
 - Sprint 4Bの実装中に見つかった**embedding consistency race**(providerへの問い合わせ中に
   Memoryのtitle/contentが変更されると、古い本文のvectorがvalidとして保存されてしまいうる問題)
   もこのSprintで修正し、続くfinal hardeningでさらに完全に閉じた。最初の修正は書き込み直前に
@@ -675,9 +673,28 @@ production embedding provider(sentence-transformers/OpenAI/Ollama等)と`SqliteV
 adapterはSprint 4Cでも意図的に未実装のまま(`ExactScanBackend` + fake/recording providerのみで
 検索architecture自体を完成させる方針)。
 
+### Vector Search Sprint 4D(一部実装、外部レビュー待ち)
+
+Sprint 4Dのうち、**Hybrid/Vector PrimaryとAssociative Retrievalの統合**のみ実装した。
+
+- `retrieval.py`の1-hop展開ロジックを`retrieve_from_primary()`として抽出し、
+  primary結果の型に依存しない(`memory_id`属性さえあればよい)Protocol/Genericにした。
+  既存の`retrieve()`(plain lexical検索用)はこの`retrieve_from_primary()`を呼ぶよう
+  委譲するだけになり、挙動・出力は変更していない
+  (`tests/test_retrieval.py`の既存テストは無変更のまま全てPASSする)。
+- CLI `search --vector --related` / `search --hybrid --related` は、Vector/Hybrid
+  Primaryの結果をそのまま`retrieve_from_primary()`へ渡して1-hop関連Memoryを取得し、
+  従来の`--related`単体時と同じ書式(`関連Memory:`セクション)で表示するようになった。
+  もう黙ってlexicalの1-hop展開に切り替えたりはしない(常にPrimaryと同じ検索channelの
+  結果を起点に展開する)。
+- Sprint 4Dの残り2項目(**10k件規模のWindows benchmark**、**障害・復旧・migrationの
+  検証**)は、このセッションがLinuxのリモート実行環境であり実機のWindows開発機では
+  ないため未実施。実際のWindows開発機での評価が必要。
+
 ### 次にやるべきPhase
 
 Phase 1〜3(Memory Foundation、Automatic Memory Worker、Retrieval)は完了している。
-Vector Search(Phase 4)はSprint 4A〜4Cまで実装済みで、Sprint 4Cは現時点でレビュー待ち。
-次に許可されるまでは **Sprint 4D(Hybrid PrimaryとAssociative Retrievalの統合、
-10k件規模のWindows benchmark、障害・復旧・migrationの検証)** へは進まない。
+Vector Search(Phase 4)はSprint 4A〜4Cまで実装済み、Sprint 4Dは
+Associative Retrieval統合のみ実装済みで、いずれも現時点でレビュー待ち。
+次に許可されるまでは **Sprint 4Dの残り(10k件規模のWindows benchmark、障害・復旧・
+migrationの検証)** へは進まない。

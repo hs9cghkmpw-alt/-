@@ -1,8 +1,15 @@
-"""Phase 3 associative retrieval over persisted one-hop memory links."""
+"""Phase 3 associative retrieval over persisted one-hop memory links.
+
+Sprint 4D: the 1-hop expansion below is shared by plain lexical search, Vector Primary
+Search, and Hybrid Primary Search alike -- `retrieve_from_primary()` only needs each
+primary result's `memory_id`, so it works with `search.ScoredResult`, `vector_search.
+VectorResult`, and `hybrid_search.HybridResult` without depending on any of those modules.
+"""
 from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from typing import Generic, Protocol, TypeVar
 
 from brain_twin import db, search
 from brain_twin.config import Config
@@ -28,22 +35,28 @@ class RelatedMemory:
     relations: list[RelatedRelation] = field(default_factory=list)
 
 
+class _HasMemoryId(Protocol):
+    memory_id: str
+
+
+PrimaryT = TypeVar("PrimaryT", bound=_HasMemoryId)
+
+
 @dataclass(frozen=True)
-class RetrievalResult:
-    primary: list[search.ScoredResult]
+class RetrievalResult(Generic[PrimaryT]):
+    primary: list[PrimaryT]
     related: list[RelatedMemory]
 
 
-def retrieve(
+def retrieve_from_primary(
     conn: sqlite3.Connection,
-    query: str,
+    primary: list[PrimaryT],
     *,
-    primary_limit: int = 20,
     related_limit: int = DEFAULT_RELATED_LIMIT,
-) -> RetrievalResult:
+) -> RetrievalResult[PrimaryT]:
+    """1-hop expansion over any primary result list (lexical, Vector, or Hybrid)."""
     if related_limit < 0:
         raise ValueError("related_limit must be non-negative")
-    primary = search.search(conn, query, limit=primary_limit)
     primary_ids = [item.memory_id for item in primary]
     if not primary_ids or related_limit == 0:
         return RetrievalResult(primary=primary, related=[])
@@ -93,6 +106,17 @@ def retrieve(
         ))
 
     return RetrievalResult(primary=primary, related=related_items)
+
+
+def retrieve(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    primary_limit: int = 20,
+    related_limit: int = DEFAULT_RELATED_LIMIT,
+) -> RetrievalResult[search.ScoredResult]:
+    primary = search.search(conn, query, limit=primary_limit)
+    return retrieve_from_primary(conn, primary, related_limit=related_limit)
 
 
 def retrieve_with_config(

@@ -88,16 +88,27 @@ def _print_hybrid_results(results: list[hybrid_search.HybridResult], *, verbose:
         print()
 
 
+def _print_related(related: list[retrieval.RelatedMemory], *, verbose: bool) -> None:
+    if not related:
+        return
+    print("関連Memory:")
+    for item in related:
+        print(f"[{item.event_date}] ({item.type}) {item.title}")
+        print(f"  id={item.memory_id}")
+        for relation in item.relations:
+            print(
+                f"  <- {relation.primary_memory_id} "
+                f"({relation.direction} / {relation.relation_type} / "
+                f"strength={relation.strength:.3f}): {relation.reason}"
+            )
+        if verbose:
+            snippet = item.content if len(item.content) <= 120 else item.content[:120] + "…"
+            print(f"  {snippet}")
+        print()
+
+
 def _cmd_search(args: argparse.Namespace) -> int:
     config = load_config()
-
-    if args.related and (args.vector or args.hybrid):
-        print(
-            "[NG] --related は --vector / --hybrid とまだ併用できません"
-            "(Sprint 4DでAssociative Retrievalと統合予定)。",
-            file=sys.stderr,
-        )
-        return 1
 
     if args.vector or args.hybrid:
         try:
@@ -108,17 +119,26 @@ def _cmd_search(args: argparse.Namespace) -> int:
         try:
             with db.connect(config) as conn:
                 if args.vector:
-                    _print_vector_results(
-                        vector_search.vector_search(conn, args.query, provider, backend, limit=args.limit),
-                        verbose=args.verbose,
+                    primary_results = vector_search.vector_search(
+                        conn, args.query, provider, backend, limit=args.limit
                     )
+                    _print_vector_results(primary_results, verbose=args.verbose)
                 else:
-                    _print_hybrid_results(
-                        hybrid_search.hybrid_search(conn, args.query, provider, backend, limit=args.limit),
-                        verbose=args.verbose,
+                    primary_results = hybrid_search.hybrid_search(
+                        conn, args.query, provider, backend, limit=args.limit
                     )
+                    _print_hybrid_results(primary_results, verbose=args.verbose)
+
+                if args.related:
+                    retrieval_result = retrieval.retrieve_from_primary(
+                        conn, primary_results, related_limit=args.related_limit
+                    )
+                    _print_related(retrieval_result.related, verbose=args.verbose)
         except EmbeddingError as exc:
             print(f"[NG] Vector search: {exc}", file=sys.stderr)
+            return 1
+        except ValueError as exc:
+            print(f"[NG] {exc}", file=sys.stderr)
             return 1
         return 0
 
@@ -149,21 +169,8 @@ def _cmd_search(args: argparse.Namespace) -> int:
             print(f"  {snippet}")
         print(f"  id={r.memory_id}")
         print()
-    if retrieval_result is not None and retrieval_result.related:
-        print("関連Memory:")
-        for item in retrieval_result.related:
-            print(f"[{item.event_date}] ({item.type}) {item.title}")
-            print(f"  id={item.memory_id}")
-            for relation in item.relations:
-                print(
-                    f"  <- {relation.primary_memory_id} "
-                    f"({relation.direction} / {relation.relation_type} / "
-                    f"strength={relation.strength:.3f}): {relation.reason}"
-                )
-            if args.verbose:
-                snippet = item.content if len(item.content) <= 120 else item.content[:120] + "…"
-                print(f"  {snippet}")
-            print()
+    if retrieval_result is not None:
+        _print_related(retrieval_result.related, verbose=args.verbose)
     return 0
 
 
@@ -259,7 +266,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_search = sub.add_parser("search", help="Memoryを検索する")
     p_search.add_argument("query", help="検索キーワード")
     p_search.add_argument("--limit", type=int, default=10)
-    p_search.add_argument("--related", action="store_true", help="1-hopの関連Memoryも表示する")
+    p_search.add_argument(
+        "--related", action="store_true",
+        help="1-hopの関連Memoryも表示する(--vector/--hybridとも併用可、Sprint 4D)",
+    )
     p_search.add_argument("--related-limit", type=int, default=retrieval.DEFAULT_RELATED_LIMIT)
     vector_group = p_search.add_mutually_exclusive_group()
     vector_group.add_argument("--vector", action="store_true", help="Vector Primary Searchを使う(Sprint 4C)")

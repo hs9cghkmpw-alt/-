@@ -1,6 +1,8 @@
 # Vector Search Design（設計レビュー用）
 
-Status: **Sprint 4A complete. Sprint 4B complete. Sprint 4C implemented; external review pending**
+Status: **Sprint 4A complete. Sprint 4B complete. Sprint 4C implemented; external review
+pending. Sprint 4D associative integration implemented; Windows benchmark and
+failure/recovery/migration validation not yet done; external review pending**
 
 Scope: Vector Searchの設計のみ。実装、`ask`、LLM回答生成、Contradiction Detection、
 Memory Consolidationは含まない。
@@ -517,14 +519,20 @@ final hardeningとして実施(2026-08-25)。外部レビュー待ち。
 - CLI opt-in(`search --vector` / `search --hybrid`、mutually exclusive)とdiagnostic
   component scores(`--verbose`)。capability unavailable時は明確なerrorで拒否する
   (黙ってlexicalへfallbackしない)。
-- Associative Retrieval(`--related`)との統合はまだ行っていない(Sprint 4D予定)。
-  `--vector --related` / `--hybrid --related`は明確な未対応errorになる。
+- Associative Retrieval(`--related`)との統合はSprint 4Dで実施した。`retrieval.
+  retrieve_from_primary()`が`memory_id`属性さえ持てばよい任意のprimary結果リストに対して
+  1-hop展開するようになり、`--vector --related` / `--hybrid --related`はVector/Hybrid
+  Primaryの結果を起点に関連Memoryを表示する(黙ってlexicalの1-hop展開に切り替えたりしない)。
 
-### Sprint 4D — associative integration and hardening
+### Sprint 4D — associative integration and hardening(一部実装、外部レビュー待ち)
 
-- hybrid Primaryを既存1-hop expansionへ接続。
-- 10k以上のWindows benchmark、failure/recovery/migration test。
-- 設計値を評価結果で調整し、Vector Search完了レビューへ提出。
+- hybrid Primaryを既存1-hop expansionへ接続。**実装済み**
+  (`retrieval.retrieve_from_primary()`、`brain_twin/cli.py`の`--vector --related` /
+  `--hybrid --related`配線、`tests/test_retrieval.py`・`tests/test_search_cli.py`)。
+- 10k以上のWindows benchmark、failure/recovery/migration test。**未実施**
+  (このセッションはLinuxのリモート実行環境であり、実機のWindows開発機ではないため)。
+- 設計値を評価結果で調整し、Vector Search完了レビューへ提出。**上記のbenchmark/
+  failure-recovery検証が終わるまで未着手**。
 
 ## 15. 未解決事項（設計レビューで決める）
 

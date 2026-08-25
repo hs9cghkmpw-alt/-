@@ -23,16 +23,21 @@ Last updated: 2026-08-25
   - Sprint 4C vector + hybrid primary retrieval: architecture / Vector Search / Hybrid RRF /
     lazy detail fetch / availability gate / CLI / handoff protocol reviewed and approved.
     **Final hardening implemented; external review pending** (see below).
+  - Sprint 4D: **associative integration implemented** (Hybrid/Vector Primary connected to
+    the existing 1-hop expansion via `retrieval.retrieve_from_primary()`); **the 10k-scale
+    Windows benchmark and failure/recovery/migration validation have NOT been done** (this
+    session runs in a Linux remote execution environment, not the actual Windows dev
+    machine) — see below. External review pending for the implemented part.
 
 ## Last known good implementation
 
-- Implementation commit: `063c3a60beb30a7d6cc7f2191ea780869f177d7f`
-- Commit title: `brain-twin-2: Sprint 4C vector + hybrid primary retrieval`
-- Local test count at that baseline: **298 passed**
-- GitHub Actions run: `32839987363`
+- Implementation commit: `cf28b4629c51245ff0ec880b58da97951f465b12`
+- Commit title: `brain-twin-2: Sprint 4C final hardening`
+- Local test count at that commit: **306 passed**
+- GitHub Actions run: `32844409644`
 - GitHub Actions result: **success** (headSha confirmed to match the pushed commit)
-- This round's hardening work (see `WORKLOG.md`) builds on top of this reviewed baseline;
-  see `WORKLOG.md` for the hardening commit once pushed.
+- This round's Sprint 4D associative-integration work (see `WORKLOG.md`) builds on top of
+  this reviewed-pending baseline; see `WORKLOG.md` for the Sprint 4D commit once pushed.
 
 ## Completed review fixes — verify before Vector Search
 
@@ -80,13 +85,37 @@ otherwise-identical calls. Added an explicit `ORDER BY score ASC, m.id ASC` tie-
 Hybrid-only function. `db.search()` / `search.search()` (the plain-search backward-compat
 path) are unchanged.
 
+### 5. Sprint 4D: connect Hybrid/Vector Primary to Associative Retrieval
+
+`--vector --related` / `--hybrid --related` previously returned an explicit "not yet
+supported" error; Associative Retrieval's 1-hop expansion only ran for plain lexical
+`search`. The expansion logic in `retrieval.py` (previously inlined in `retrieve()`) is now
+`retrieve_from_primary()`: it only requires each primary result to expose `memory_id`
+(a `Protocol`/`TypeVar`, not a concrete import of `search.ScoredResult`), so it works
+unchanged for `search.ScoredResult`, `vector_search.VectorResult`, and `hybrid_search.
+HybridResult` alike. `retrieve()` now just calls `search.search()` then delegates to
+`retrieve_from_primary()` — its behavior and output are unchanged (existing
+`tests/test_retrieval.py` tests pass without modification). The CLI wires `--vector
+--related` / `--hybrid --related` through the same function, so relation display is
+identical to the plain-`--related` path.
+
+**Not done this round** (explicitly out of reach in this session's Linux remote execution
+environment, not the actual Windows dev machine): the 10k-scale Windows benchmark, and
+failure/recovery/migration validation, both still listed under Sprint 4D in
+`docs/VECTOR_SEARCH_DESIGN.md`. Design-value tuning and the Vector Search completion review
+submission depend on those and have not started either.
+
 ## Next authorized task
 
-**Sprint 4C final hardening implemented; external review pending.**
+**Sprint 4D associative integration implemented; external review pending.** The remaining
+Sprint 4D items (10k-scale Windows benchmark, failure/recovery/migration validation, design
+value tuning, Vector Search completion review submission) still need a real Windows dev
+machine and have not been attempted.
 
-Do **not** begin Sprint 4D (Associative Retrieval integration) until this implementation is
-reviewed and explicitly approved. Production embedding providers, `SqliteVecBackend`, `ask`,
-Contradiction Detection, Memory Consolidation, and smartphone integration remain out of scope.
+Do **not** begin Sprint 4E-equivalent scope (or anything beyond finishing Sprint 4D) until
+this implementation is reviewed and explicitly approved. Production embedding providers,
+`SqliteVecBackend`, `ask`, Contradiction Detection, Memory Consolidation, and smartphone
+integration remain out of scope.
 
 ## Core invariants
 

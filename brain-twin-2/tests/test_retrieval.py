@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from brain_twin import db, pipeline, retrieval
 
 
@@ -135,6 +137,39 @@ def test_no_links_keeps_normal_search_results(config):
         result = retrieval.retrieve(conn, "searchable phrase")
     assert [item.memory_id for item in result.primary] == ["primary"]
     assert result.related == []
+
+
+@dataclass(frozen=True)
+class _DummyPrimaryResult:
+    """Sprint 4D: `retrieve_from_primary()` must work for any result type with a
+    `memory_id` field (Vector's `VectorResult`, Hybrid's `HybridResult`), not just
+    `search.ScoredResult`. This stand-in has no other fields, so a passing test proves
+    the 1-hop expansion never reaches into primary-result fields beyond `memory_id`."""
+    memory_id: str
+
+
+def test_retrieve_from_primary_works_with_any_primary_result_type(config):
+    with db.connect(config) as conn:
+        _memory(conn, "primary", "unique searchable phrase")
+        _memory(conn, "related", "other memory")
+        _link(conn, "primary", "related")
+        primary = [_DummyPrimaryResult(memory_id="primary")]
+        result = retrieval.retrieve_from_primary(conn, primary)
+    assert result.primary == primary
+    assert result.related[0].memory_id == "related"
+    assert result.related[0].relations[0].direction == "outgoing"
+
+
+def test_retrieve_delegates_to_retrieve_from_primary_with_same_expansion_rules(config):
+    with db.connect(config) as conn:
+        _memory(conn, "primary", "unique searchable phrase")
+        for index in range(4):
+            memory_id = f"related-{index}"
+            _memory(conn, memory_id, f"other memory {index}")
+            _link(conn, "primary", memory_id)
+        via_retrieve = retrieval.retrieve(conn, "searchable phrase", related_limit=2)
+        via_primary = retrieval.retrieve_from_primary(conn, via_retrieve.primary, related_limit=2)
+    assert via_retrieve.related == via_primary.related
 
 
 def test_associative_retrieval_survives_reindex(config):

@@ -99,18 +99,53 @@ def test_search_vector_and_hybrid_are_mutually_exclusive(config, tmp_path, monke
     assert "not allowed with argument" in err
 
 
-def test_search_related_and_vector_are_rejected_explicitly(config, tmp_path, monkeypatch, capsys):
+def test_search_vector_with_related_shows_related_section(config, tmp_path, monkeypatch, capsys):
     _ready(config, tmp_path, monkeypatch)
-    assert cli.main(["search", "unique cli search phrase", "--related", "--vector"]) == 1
-    err = capsys.readouterr().err
-    assert "--related" in err and "--vector" in err
+    _insert_memory(config, "mem_2", "some other memory")
+    with db.connect(config) as conn:
+        db.upsert_link(
+            conn, source_memory_id="mem_1", target_memory_id="mem_2",
+            relation_type="same_topic", reason="shared topic", strength=0.5,
+            created_at="2026-08-25T00:00:00+09:00",
+        )
+        conn.commit()
+    assert cli.main(["search", "unique cli search phrase", "--vector", "--related"]) == 0
+    out = capsys.readouterr().out
+    assert "id=mem_1" in out
+    assert "関連Memory:" in out and "id=mem_2" in out
 
 
-def test_search_related_and_hybrid_are_rejected_explicitly(config, tmp_path, monkeypatch, capsys):
+def test_search_hybrid_with_related_shows_related_section(config, tmp_path, monkeypatch, capsys):
     _ready(config, tmp_path, monkeypatch)
-    assert cli.main(["search", "unique cli search phrase", "--related", "--hybrid"]) == 1
+    _insert_memory(config, "mem_2", "some other memory")
+    with db.connect(config) as conn:
+        db.upsert_link(
+            conn, source_memory_id="mem_1", target_memory_id="mem_2",
+            relation_type="same_topic", reason="shared topic", strength=0.5,
+            created_at="2026-08-25T00:00:00+09:00",
+        )
+        conn.commit()
+    assert cli.main(["search", "unique cli search phrase", "--hybrid", "--related"]) == 0
+    out = capsys.readouterr().out
+    assert "id=mem_1" in out
+    assert "関連Memory:" in out and "id=mem_2" in out
+
+
+def test_search_vector_with_related_and_no_links_omits_related_section(config, tmp_path, monkeypatch, capsys):
+    _ready(config, tmp_path, monkeypatch)
+    assert cli.main(["search", "unique cli search phrase", "--vector", "--related"]) == 0
+    out = capsys.readouterr().out
+    assert "id=mem_1" in out
+    assert "関連Memory:" not in out
+
+
+def test_search_vector_with_negative_related_limit_is_a_clear_error(config, tmp_path, monkeypatch, capsys):
+    _ready(config, tmp_path, monkeypatch)
+    assert cli.main(
+        ["search", "unique cli search phrase", "--vector", "--related", "--related-limit", "-1"]
+    ) == 1
     err = capsys.readouterr().err
-    assert "--related" in err and "--hybrid" in err
+    assert "[NG]" in err
 
 
 def test_search_vector_cli_capability_unavailable_is_a_clear_error(config, tmp_path, monkeypatch, capsys):
