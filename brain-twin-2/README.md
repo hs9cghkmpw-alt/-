@@ -588,6 +588,11 @@ Sprint 4Bではproduction providerを同梱していないため、`status`は�
 orchestrationはoffline deterministic fakeで検証しており、provider adapterは次の承認済みSprintで
 別途追加する。`apikey`/`APIKey`/`private_key`/`privateKey`も平文credentialとして拒否する。
 
+staging profile生成中はcanonical BLOBだけを保存し、現在activeなbackend indexへincremental
+upsertしない。同一active profileかつbackend stateが完全にreadyの場合だけincremental同期する。
+またtitle/content変更時はSQLite triggerが既存embeddingを即時invalid化し、ExactScanはvalid rowを
+top-K計算前にSQLで限定する。したがってsync前やprovider失敗中にstale vectorは検索候補にならない。
+
 指示書のPhase 2の残り(自動ラベリングの高度化、より高度なEntity抽出)、および
 Phase 3以降: Contradiction Detection・Memory Consolidation・Vector Search・
 LLM Provider Interface・スマホ連携・`ask`コマンド、など。

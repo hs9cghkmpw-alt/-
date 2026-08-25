@@ -19,8 +19,8 @@ Last updated: 2026-08-25
   - Final hardening review: **complete**
 - Phase 4 — Vector Search:
   - Sprint 4A contracts / canonical cache / ExactScan / Windows storage spike: **complete**
-  - Sprint 4B rebuildable embedding cache: **implemented; external review pending**
-  - Sprint 4B local tests: **220 passed**
+  - Sprint 4B rebuildable embedding cache: **hardening implemented; external review pending**
+  - Sprint 4B hardening local tests: **232 passed**
 
 ## Last known good implementation
 
@@ -49,7 +49,7 @@ outgoing/incoming、inactive除外、1-hop、決定的順序は維持する。
 
 ## Next authorized task
 
-**Sprint 4B implemented; external review pending.**
+**Sprint 4B hardening implemented; external review pending.**
 
 Do **not** begin Sprint 4C until this implementation is reviewed and explicitly approved.
 LLM integration, `ask`, Contradiction Detection, Memory Consolidation, and smartphone integration remain out of scope.

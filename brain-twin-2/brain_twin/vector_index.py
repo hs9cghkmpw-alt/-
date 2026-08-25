@@ -23,6 +23,8 @@ class VectorIndexBackend(Protocol):
 
     ``build`` must stage its work and preserve the currently active index if it fails.  Service
     code switches active profile/backend state only after build returns successfully.
+    ``search`` must exclude repository rows whose canonical embedding is invalid before scoring
+    and top-K selection; post-filtering stale candidates is not contract-compliant.
     """
 
     backend_id: str

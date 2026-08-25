@@ -19,6 +19,7 @@ class EmbeddingMemoryRow:
 class EmbeddingMetadata:
     memory_id: str
     content_hash: str
+    is_valid: bool
 
 
 @dataclass(frozen=True)
@@ -59,12 +60,14 @@ def embedding_metadata_by_ids(
         placeholders = ",".join("?" for _ in batch)
         rows = conn.execute(
             f"""
-            SELECT memory_id, content_hash FROM memory_embeddings
+            SELECT memory_id, content_hash, is_valid FROM memory_embeddings
             WHERE profile_fingerprint = ? AND memory_id IN ({placeholders})
             """,
             [profile_fingerprint, *batch],
         ).fetchall()
-        result.update((row[0], EmbeddingMetadata(*row)) for row in rows)
+        result.update(
+            (row[0], EmbeddingMetadata(row[0], row[1], bool(row[2]))) for row in rows
+        )
     return result
 
 
@@ -103,6 +106,21 @@ def backend_state(conn: sqlite3.Connection) -> BackendState | None:
         """
     ).fetchone()
     return BackendState(*row) if row else None
+
+
+def is_backend_ready_for_profile(
+    conn: sqlite3.Connection, *, profile_fingerprint: str,
+    backend: str, schema_version: int,
+) -> bool:
+    state = backend_state(conn)
+    return bool(
+        active_profile_fingerprint(conn) == profile_fingerprint
+        and state is not None
+        and state.backend == backend
+        and state.schema_version == schema_version
+        and state.profile_fingerprint == profile_fingerprint
+        and state.build_status == "ready"
+    )
 
 
 def set_backend_state(

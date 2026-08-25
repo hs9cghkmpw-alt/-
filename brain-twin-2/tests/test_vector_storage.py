@@ -72,6 +72,30 @@ def test_connect_recreates_all_dropped_embedding_cache_tables(config):
         assert {"embedding_profiles", "memory_embeddings", "active_embedding_state", "vector_backend_state"} <= names
 
 
+def test_connect_self_heals_embedding_cache_missing_validity_column(config):
+    config.data_dir.mkdir(parents=True)
+    conn = sqlite3.connect(config.db_path)
+    conn.execute(
+        """
+        CREATE TABLE memory_embeddings(
+            memory_id TEXT NOT NULL, profile_fingerprint TEXT NOT NULL,
+            content_hash TEXT NOT NULL, embedding_blob BLOB NOT NULL,
+            embedded_at TEXT NOT NULL, PRIMARY KEY(memory_id, profile_fingerprint)
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO memory_embeddings VALUES ('legacy', 'profile', 'hash', X'00000000', 'now')"
+    )
+    conn.commit(); conn.close()
+    with db.connect(config) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_embeddings)")}
+        assert "is_valid" in columns
+        assert conn.execute(
+            "SELECT is_valid FROM memory_embeddings WHERE memory_id = 'legacy'"
+        ).fetchone()[0] == 0
+
+
 def test_memory_delete_cascades_embedding(config):
     profile = _profile()
     with db.connect(config) as conn:

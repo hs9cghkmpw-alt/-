@@ -347,6 +347,18 @@ bounded exponential backoffとする。各成功commit chunkはcanonical保存�
 commitの順で確定する。不正output batchは保存せず、途中失敗時の確定済みbatchはresumeでskipする。
 新profileのpartial cacheは残す一方、active pointer/backend ready stateは全件+build成功後のみ更新する。
 
+hardening後のbackend同期invariant: targetが現在active profileで、backend id/schema/indexed profileが
+一致し`ready`の場合だけincremental `sync_upsert`する。targetがstaging profile、または同profileでも
+backend stateがreadyでない場合、生成中はcanonical cacheだけを保存してactive indexへ触れない。
+全canonical rowがreadyになってから`build(target)`し、成功後だけprofile/backend stateを切り替える。
+途中失敗時は旧active index/stateを維持し、partial target cacheだけをresume用に残す。
+
+stale embeddingは検索不能というinvariantを持つ。Memory title/contentのSQLite更新triggerが全profileの
+該当cache rowを`is_valid=0`へ即時invalid化し、成功したcanonical upsertだけが1へ戻す。
+metadata-only変更ではinvalid化しない。Backend searchは本文/hashを再計算せず、このrepository validityを
+scoring/top-K選抜前に適用しなければならない。ExactScanはvalid rowだけをSQL取得する。
+validity列導入前のlegacy cacheはmigration時に保守的な0とし、次回syncでのみ再valid化する。
+
 ### query
 
 1. lexical channelとquery embedding/vector channelを実行。
@@ -477,7 +489,7 @@ core dependency化と本番adapter実装はこの判定には含めない。
 - local deterministic fakeでreindex完全復元を先に保証。
 - production providerはまだ1種類に限定し、LLM interfaceは作らない。
 
-実装済み（外部レビュー待ち）。production providerとSqliteVecBackendは意図的に未実装。
+hardening実装済み（外部レビュー待ち）。production providerとSqliteVecBackendは意図的に未実装。
 管理CLIは独立した`embeddings status/sync/rebuild`を採用し、通常`reindex`とは接続しない。
 
 ### Sprint 4C — vector and hybrid primary retrieval

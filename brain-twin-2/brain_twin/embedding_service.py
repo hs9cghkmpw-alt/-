@@ -83,6 +83,11 @@ class EmbeddingService:
         profile = self.provider.profile
         embedded = skipped = 0
         with db.connect(self.config) as conn:
+            previous_active = repository.active_profile_fingerprint(conn)
+            incremental_backend_sync = repository.is_backend_ready_for_profile(
+                conn, profile_fingerprint=profile.fingerprint,
+                backend=self.backend.backend_id, schema_version=self.backend.schema_version,
+            )
             repository.upsert_profile(conn, profile, created_at=self._timestamp())
             conn.commit()
             after_id: str | None = None
@@ -101,7 +106,10 @@ class EmbeddingService:
                 for row in page:
                     document = build_embedding_document(row)
                     existing = metadata.get(row.memory_id)
-                    if not force and existing and existing.content_hash == document.content_hash:
+                    if (
+                        not force and existing and existing.is_valid
+                        and existing.content_hash == document.content_hash
+                    ):
                         skipped += 1
                     else:
                         pending.append((row, document.text, document.content_hash))
@@ -119,26 +127,30 @@ class EmbeddingService:
                                     content_hash=content_hash, vector=list(vector),
                                     embedded_at=self._timestamp(),
                                 )
-                                self.backend.sync_upsert(
-                                    conn, row.memory_id, profile.fingerprint, vector
-                                )
+                                if incremental_backend_sync:
+                                    self.backend.sync_upsert(
+                                        conn, row.memory_id, profile.fingerprint, vector
+                                    )
                             conn.commit()
                         except BaseException:
                             conn.rollback()
                             raise
                         embedded += len(items)
 
-            # Backend.build must preserve any currently active index until it succeeds.
-            self.backend.build(conn, profile.fingerprint)
-            repository.set_active_profile(conn, profile.fingerprint)
-            repository.set_backend_state(
-                conn, backend=self.backend.backend_id, schema_version=self.backend.schema_version,
-                profile_fingerprint=profile.fingerprint, build_status="ready",
-                built_at=self._timestamp(),
-            )
-            conn.commit()
+            if not incremental_backend_sync:
+                # Staging cache is complete. build must preserve the old active index on failure.
+                self.backend.build(conn, profile.fingerprint)
+                repository.set_active_profile(conn, profile.fingerprint)
+                repository.set_backend_state(
+                    conn, backend=self.backend.backend_id,
+                    schema_version=self.backend.schema_version,
+                    profile_fingerprint=profile.fingerprint, build_status="ready",
+                    built_at=self._timestamp(),
+                )
+                conn.commit()
         return EmbeddingSyncResult(
-            embedded=embedded, skipped=skipped, failed=0, active_switched=True
+            embedded=embedded, skipped=skipped, failed=0,
+            active_switched=previous_active != profile.fingerprint,
         )
 
     def rebuild(self) -> EmbeddingSyncResult:
@@ -235,7 +247,7 @@ def inspect_embedding_status(
             existing = metadata.get(row.memory_id)
             if existing is None:
                 missing += 1
-            elif existing.content_hash != build_embedding_document(row).content_hash:
+            elif not existing.is_valid or existing.content_hash != build_embedding_document(row).content_hash:
                 stale += 1
             else:
                 ready += 1

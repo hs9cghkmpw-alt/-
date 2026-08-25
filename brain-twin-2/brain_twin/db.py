@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS memory_embeddings (
     profile_fingerprint TEXT NOT NULL REFERENCES embedding_profiles(fingerprint) ON DELETE CASCADE,
     content_hash        TEXT NOT NULL,
     embedding_blob      BLOB NOT NULL,
+    is_valid            INTEGER NOT NULL DEFAULT 0 CHECK (is_valid IN (0, 1)),
     embedded_at         TEXT NOT NULL,
     PRIMARY KEY (memory_id, profile_fingerprint)
 );
@@ -196,6 +197,15 @@ CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
 END;
 """
 
+EMBEDDING_INVALIDATION_SQL = """
+CREATE TRIGGER IF NOT EXISTS memories_embedding_invalidate_au
+AFTER UPDATE OF title, content ON memories
+WHEN old.title IS NOT new.title OR old.content IS NOT new.content
+BEGIN
+    UPDATE memory_embeddings SET is_valid = 0 WHERE memory_id = new.id;
+END;
+"""
+
 
 @dataclass(frozen=True)
 class SearchHit:
@@ -230,6 +240,11 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
     )
     _ensure_column(conn, "memory_entities", "confidence", "REAL NOT NULL DEFAULT 1.0")
     _ensure_column(conn, "memory_entities", "method", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(
+        conn, "memory_embeddings", "is_valid",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (is_valid IN (0, 1))",
+    )
+    conn.executescript(EMBEDDING_INVALIDATION_SQL)
     conn.commit()
 
 
@@ -300,11 +315,12 @@ def upsert_memory_embedding(
     conn.execute(
         """
         INSERT INTO memory_embeddings (
-            memory_id, profile_fingerprint, content_hash, embedding_blob, embedded_at
-        ) VALUES (?, ?, ?, ?, ?)
+            memory_id, profile_fingerprint, content_hash, embedding_blob, is_valid, embedded_at
+        ) VALUES (?, ?, ?, ?, 1, ?)
         ON CONFLICT(memory_id, profile_fingerprint) DO UPDATE SET
             content_hash=excluded.content_hash,
             embedding_blob=excluded.embedding_blob,
+            is_valid=1,
             embedded_at=excluded.embedded_at
         """,
         (memory_id, profile.fingerprint, content_hash, blob, embedded_at),
@@ -341,7 +357,7 @@ def active_embedding_blobs(
             SELECT me.memory_id, me.embedding_blob
             FROM memory_embeddings me
             JOIN memories m ON m.id = me.memory_id
-            WHERE me.profile_fingerprint = ? AND m.status = 'active'
+            WHERE me.profile_fingerprint = ? AND me.is_valid = 1 AND m.status = 'active'
             ORDER BY me.memory_id
             """,
             (fingerprint,),

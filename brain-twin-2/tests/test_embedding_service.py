@@ -47,6 +47,23 @@ class FailingBuildBackend(ExactScanBackend):
         raise RuntimeError("build failed")
 
 
+class TrackingBackend(ExactScanBackend):
+    def __init__(self, *, fail_build=False):
+        self.fail_build = fail_build
+        self.sync_upserts = []
+        self.builds = []
+
+    def sync_upsert(self, conn, memory_id, profile_fingerprint, vector):
+        self.sync_upserts.append((memory_id, profile_fingerprint, len(vector)))
+        return super().sync_upsert(conn, memory_id, profile_fingerprint, vector)
+
+    def build(self, conn, profile_fingerprint):
+        self.builds.append(profile_fingerprint)
+        if self.fail_build:
+            raise RuntimeError("build failed")
+        return super().build(conn, profile_fingerprint)
+
+
 def _profile(*, epoch="generation-1", dimension=3, normalized=False):
     return EmbeddingProfile(
         provider_id="fake", model_name="fake", model_revision=None,
@@ -333,3 +350,134 @@ def test_cache_deleted_after_vault_reindex_is_rebuilt_from_markdown_memory(confi
     assert service.rebuild().embedded == 1
     with db.connect(config) as conn:
         assert conn.execute("SELECT count(*) FROM memory_embeddings").fetchone()[0] == 1
+
+
+def test_staging_profile_does_not_sync_upsert_before_activation(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    backend = TrackingBackend()
+    old = RecordingProvider(_profile(epoch="old", dimension=3))
+    _service(config, old, backend).sync()
+    backend.sync_upserts.clear(); backend.builds.clear()
+
+    new = RecordingProvider(_profile(epoch="new", dimension=5))
+    result = _service(config, new, backend).sync()
+    assert backend.sync_upserts == []
+    assert backend.builds == [new.profile.fingerprint]
+    assert result.active_switched
+
+
+def test_staging_provider_failure_leaves_active_backend_untouched(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); _memory(conn, "b"); conn.commit()
+    backend = TrackingBackend(); old = RecordingProvider(_profile(epoch="old"))
+    _service(config, old, backend).sync()
+    backend.sync_upserts.clear(); backend.builds.clear()
+    old_state = None
+    with db.connect(config) as conn:
+        old_state = repository.backend_state(conn)
+    new = RecordingProvider(
+        _profile(epoch="new"), fail_calls={2: EmbeddingConfigurationError("stop")}
+    )
+    with pytest.raises(EmbeddingConfigurationError):
+        _service(config, new, backend, provider_batch_size=1).sync()
+    assert backend.sync_upserts == [] and backend.builds == []
+    with db.connect(config) as conn:
+        assert repository.active_profile_fingerprint(conn) == old.profile.fingerprint
+        assert repository.backend_state(conn) == old_state
+
+
+def test_staging_build_failure_preserves_old_profile_and_backend_state(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    old_backend = TrackingBackend(); old = RecordingProvider(_profile(epoch="old"))
+    _service(config, old, old_backend).sync()
+    with db.connect(config) as conn:
+        old_state = repository.backend_state(conn)
+    failing = TrackingBackend(fail_build=True)
+    new = RecordingProvider(_profile(epoch="new"))
+    with pytest.raises(RuntimeError):
+        _service(config, new, failing).sync()
+    assert failing.sync_upserts == []
+    with db.connect(config) as conn:
+        assert repository.active_profile_fingerprint(conn) == old.profile.fingerprint
+        assert repository.backend_state(conn) == old_state
+
+
+def test_same_active_ready_profile_uses_incremental_sync_upsert(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    backend = TrackingBackend(); provider = RecordingProvider(); service = _service(config, provider, backend)
+    assert service.sync().active_switched
+    backend.sync_upserts.clear(); backend.builds.clear()
+    with db.connect(config) as conn:
+        _memory(conn, "a", title="changed"); conn.commit()
+    result = service.sync()
+    assert backend.sync_upserts == [("a", provider.profile.fingerprint, 3)]
+    assert backend.builds == []
+    assert not result.active_switched
+
+
+def test_same_profile_backend_not_ready_uses_safe_build_path(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    backend = TrackingBackend(); provider = RecordingProvider(); service = _service(config, provider, backend)
+    service.sync(); backend.sync_upserts.clear(); backend.builds.clear()
+    with db.connect(config) as conn:
+        _memory(conn, "a", content="changed")
+        repository.set_backend_state(
+            conn, backend=backend.backend_id, schema_version=backend.schema_version,
+            profile_fingerprint=provider.profile.fingerprint, build_status="building", built_at=None,
+        )
+        conn.commit()
+    result = service.sync()
+    assert backend.sync_upserts == []
+    assert backend.builds == [provider.profile.fingerprint]
+    assert not result.active_switched
+
+
+@pytest.mark.parametrize("field", ["title", "content"])
+def test_exact_scan_excludes_stale_vector_before_sync(config, field):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    provider = RecordingProvider(); backend = ExactScanBackend(); service = _service(config, provider, backend)
+    service.sync()
+    with db.connect(config) as conn:
+        assert backend.search(conn, provider.profile.fingerprint, [1, 1, 1], limit=5)
+        _memory(conn, "a", **{field: "changed"}); conn.commit()
+        assert backend.search(conn, provider.profile.fingerprint, [1, 1, 1], limit=5) == []
+
+
+@pytest.mark.parametrize("change", [
+    {"type": "fact"}, {"topics": '["changed"]'}, {"entity": "Entity"},
+])
+def test_metadata_only_change_remains_exact_searchable(config, change):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    provider = RecordingProvider(); backend = ExactScanBackend(); service = _service(config, provider, backend)
+    service.sync()
+    with db.connect(config) as conn:
+        if "entity" in change:
+            entity_id = db.get_or_create_entity(conn, change["entity"])
+            conn.execute("INSERT INTO memory_entities(memory_id, entity_id) VALUES ('a', ?)", (entity_id,))
+        else:
+            _memory(conn, "a", **change)
+        conn.commit()
+        assert backend.search(conn, provider.profile.fingerprint, [1, 1, 1], limit=5)
+
+
+def test_failed_stale_reembedding_stays_unsearchable_then_success_restores(config):
+    with db.connect(config) as conn:
+        _memory(conn, "a"); conn.commit()
+    profile = _profile(); backend = ExactScanBackend()
+    initial = RecordingProvider(profile); _service(config, initial, backend).sync()
+    with db.connect(config) as conn:
+        _memory(conn, "a", content="changed"); conn.commit()
+    failing = RecordingProvider(profile, fail_calls={1: EmbeddingConfigurationError("offline")})
+    with pytest.raises(EmbeddingConfigurationError):
+        _service(config, failing, backend).sync()
+    with db.connect(config) as conn:
+        assert backend.search(conn, profile.fingerprint, [1, 1, 1], limit=5) == []
+    assert _service(config, RecordingProvider(profile), backend).sync().embedded == 1
+    with db.connect(config) as conn:
+        assert backend.search(conn, profile.fingerprint, [1, 1, 1], limit=5)[0].memory_id == "a"

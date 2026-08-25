@@ -14,7 +14,8 @@ from brain_twin.vector_index import VectorSearchResult
 class ExactScanBackend:
     """Index adapter with no separate index; sync operations intentionally do nothing.
 
-    Search reads the repository-owned canonical cache.  Callers must mutate that cache before
+    Search reads only repository rows marked valid. Memory title/content updates invalidate rows
+    before scoring, so stale vectors are never candidates. Callers must mutate that cache before
     calling sync_upsert/sync_delete; none of these backend methods changes canonical BLOBs.
     """
 

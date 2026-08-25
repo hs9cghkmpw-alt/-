@@ -101,3 +101,15 @@ Rules:
 - Commit: this commit。
 - Known issues: production providerとSqliteVecBackendは未実装。Primary Vector/Hybrid SearchはSprint 4C以降。
 - Next: **Sprint 4B implemented; external review pending**。Sprint 4Cへは進めない。
+
+## 2026-08-25 — Codex — Vector Search Sprint 4B final hardening
+
+- Branch: `brain-twin-dev`
+- Base: `1978228a1a62d12c606343915476e9d94c1756ac`
+- Scope: staging profileのactive index隔離とstale embedding検索除外のみ。
+- Changed: active/backend ready判定をrepositoryへ集約し、stagingはcanonical-only、同一active+readyだけincremental同期。title/content update triggerでcacheをinvalid化し、ExactScanはvalid rowのみをtop-K前に取得。
+- Tests: 既存220件を維持し、hardening cases 12件を追加。local `232 passed`。
+- CI: push後に確認予定。
+- Commit: this commit。
+- Known issues: SqliteVecBackend/production provider/Vector・Hybrid Searchは未実装。
+- Next: **Sprint 4B hardening implemented; external review pending**。Sprint 4Cへは進めない。
