@@ -36,6 +36,7 @@ def test_config_override_and_profile_backend_separation(tmp_path):
     "api_key", "api-key", "apiKey", "openai_api_key", "secret_key",
     "access_token", "refresh_token", "auth_token", "bearer_token",
     "password", "passwd", "client_secret", "clientSecret",
+    "apikey", "APIKey", "private_key", "privateKey",
 ])
 def test_plaintext_credential_field_is_rejected(tmp_path, key):
     path = tmp_path / "config.toml"

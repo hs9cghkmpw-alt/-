@@ -567,6 +567,27 @@ Vector backendのmutationはcanonical BLOBではなく派生indexだけを対象
 Embedding user configはseparator/camelCaseを正規化したcredential key検査を行い、未知の
 nested fieldであってもAPI key/token/password/secret類の平文保存を拒否する。
 
+### Vector Search Sprint 4B（外部レビュー待ち）
+
+canonical embedding cacheは次の明示commandで管理する。通常の`reindex`は従来どおり
+providerを呼ばず、embedding生成やnetwork accessを開始しない。
+
+```bash
+python brain.py embeddings status
+python brain.py embeddings sync
+python brain.py embeddings rebuild
+```
+
+syncはactive Memoryをkeyset paginationで読み、canonical document hashがmissing/staleの
+Memoryだけをprovider batchへ送る。成功したbatchは都度commitするため、中断後の再実行では
+hash/profile一致分をskipして残件から再開する。新profileはpartial cacheをstagingとして保持し、
+全件生成とbackend buildが成功した後だけactive pointerを切り替える。
+
+Sprint 4Bではproduction providerを同梱していないため、`status`は設定だけで利用できるが、
+標準配布のまま`sync`/`rebuild`を実行すると「provider is not installed」という明示errorになる。
+orchestrationはoffline deterministic fakeで検証しており、provider adapterは次の承認済みSprintで
+別途追加する。`apikey`/`APIKey`/`private_key`/`privateKey`も平文credentialとして拒否する。
+
 指示書のPhase 2の残り(自動ラベリングの高度化、より高度なEntity抽出)、および
 Phase 3以降: Contradiction Detection・Memory Consolidation・Vector Search・
 LLM Provider Interface・スマホ連携・`ask`コマンド、など。

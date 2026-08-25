@@ -89,3 +89,15 @@ Rules:
 - Commit: this commit。
 - Known issues: production provider、SqliteVecBackend、embedding orchestration、Vector/Hybrid Searchは未実装。
 - Next: **Sprint 4A hardening implemented; external review pending**。Sprint 4Bへは進めない。
+
+## 2026-08-25 — Codex — Vector Search Sprint 4B
+
+- Branch: `brain-twin-dev`
+- Base: `368f0684f0eff0b1e739e676c445e1a848f53a05`
+- Scope: rebuildable embedding cache orchestration、resume/profile switch、管理CLI。Vector/Hybrid Searchは対象外。
+- Changed: keyset repository、中央batch/retry policy、missing/stale sync、commit単位partial progress、build成功後active切替、backend-only rebuild、`embeddings status/sync/rebuild`を追加。credential検出へcompact API/private keyを追加。
+- Tests: 既存180件を維持し、Sprint 4B cases 40件を追加。local `220 passed`。
+- CI: push後に確認予定。
+- Commit: this commit。
+- Known issues: production providerとSqliteVecBackendは未実装。Primary Vector/Hybrid SearchはSprint 4C以降。
+- Next: **Sprint 4B implemented; external review pending**。Sprint 4Cへは進めない。

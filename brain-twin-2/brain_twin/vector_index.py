@@ -19,7 +19,11 @@ class VectorSearchResult:
 
 @runtime_checkable
 class VectorIndexBackend(Protocol):
-    """Manage a rebuildable search index derived from canonical embedding BLOBs."""
+    """Manage a rebuildable search index derived from canonical embedding BLOBs.
+
+    ``build`` must stage its work and preserve the currently active index if it fails.  Service
+    code switches active profile/backend state only after build returns successfully.
+    """
 
     backend_id: str
     schema_version: int

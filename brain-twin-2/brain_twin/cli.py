@@ -4,8 +4,11 @@ from __future__ import annotations
 import argparse
 import sys
 
-from brain_twin import pipeline, retrieval, search
+from brain_twin import db, embedding_runtime, pipeline, retrieval, search
 from brain_twin.config import load_config
+from brain_twin.embedding_config import default_user_config_path, load_embedding_settings
+from brain_twin.embedding_provider import EmbeddingConfigurationError, EmbeddingError
+from brain_twin.embedding_service import EmbeddingService, inspect_embedding_status
 
 
 def _cmd_add(args: argparse.Namespace) -> int:
@@ -120,6 +123,49 @@ def _cmd_reindex(args: argparse.Namespace) -> int:
     return 0
 
 
+def _embedding_components(*, require_provider: bool):
+    settings = load_embedding_settings(default_user_config_path())
+    backend = embedding_runtime.create_backend(settings)
+    provider = embedding_runtime.create_provider(settings) if require_provider else None
+    if provider is not None and provider.profile.fingerprint != settings.profile.fingerprint:
+        raise EmbeddingConfigurationError(
+            "configured embedding profile does not match the provider profile"
+        )
+    return settings, backend, provider
+
+
+def _print_embedding_status(status) -> None:
+    print("Embeddings")
+    print(f"Profile: {status.profile_fingerprint}")
+    print(f"Backend: {status.backend}")
+    print(f"Total active Memories: {status.total_active}")
+    print(f"Ready: {status.ready}")
+    print(f"Missing: {status.missing}")
+    print(f"Stale: {status.stale}")
+    print(f"Active profile matches config: {'yes' if status.active_matches_config else 'no'}")
+
+
+def _cmd_embeddings(args: argparse.Namespace) -> int:
+    config = load_config()
+    try:
+        require_provider = args.embeddings_command in {"sync", "rebuild"}
+        settings, backend, provider = _embedding_components(require_provider=require_provider)
+        if args.embeddings_command == "status":
+            with db.connect(config) as conn:
+                status = inspect_embedding_status(conn, settings.profile, backend.backend_id)
+            _print_embedding_status(status)
+            return 0
+        service = EmbeddingService(config, provider, backend)
+        result = service.sync() if args.embeddings_command == "sync" else service.rebuild()
+        print(f"Embedded: {result.embedded}")
+        print(f"Skipped: {result.skipped}")
+        print(f"Failed: {result.failed}")
+        return 0
+    except (EmbeddingError, OSError, ValueError) as exc:
+        print(f"[NG] Embeddings: {exc}", file=sys.stderr)
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="brain.py", description="Brain Twin 2.0 (Phase 3: Retrieval)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -150,6 +196,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_reindex = sub.add_parser("reindex", help="SQLite indexをVaultのMarkdownから作り直す")
     p_reindex.set_defaults(func=_cmd_reindex)
+
+    p_embeddings = sub.add_parser("embeddings", help="embedding cacheを明示的に管理する")
+    embeddings_sub = p_embeddings.add_subparsers(dest="embeddings_command", required=True)
+    for command in ("status", "sync", "rebuild"):
+        child = embeddings_sub.add_parser(command)
+        child.set_defaults(func=_cmd_embeddings)
 
     return parser
 

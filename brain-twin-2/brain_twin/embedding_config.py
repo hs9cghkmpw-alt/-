@@ -75,6 +75,9 @@ def _is_credential_key(key: str) -> bool:
     # Split camelCase before treating punctuation (underscore, dash, dot, etc.) uniformly.
     separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key).casefold()
     tokens = tuple(token for token in re.split(r"[^a-z0-9]+", separated) if token)
+    compact = "".join(tokens)
+    if compact in {"apikey", "privatekey"}:
+        return True
     if any(token in _SECRET_TOKENS for token in tokens):
         return True
     return any(left == "api" and right == "key" for left, right in zip(tokens, tokens[1:]))

@@ -10,9 +10,9 @@ from brain_twin.embedding_provider import EmbeddingError, EmbeddingProfile
 class FakeEmbeddingProvider:
     def __init__(
         self, dimension: int = 4, *, error: EmbeddingError | None = None,
-        profile_epoch: str = "test-generation-1"
+        profile_epoch: str = "test-generation-1", profile: EmbeddingProfile | None = None,
     ) -> None:
-        self._profile = EmbeddingProfile(
+        self._profile = profile or EmbeddingProfile(
             provider_id="fake", model_name="deterministic-test", model_revision=None,
             profile_epoch=profile_epoch, embedding_contract_version=1,
             dimension=dimension, normalized=False, document_template_version=1,

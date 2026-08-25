@@ -1,6 +1,6 @@
 # Vector Search Design（設計レビュー用）
 
-Status: **Sprint 4A implemented; external review pending**
+Status: **Sprint 4A complete. Sprint 4B implemented; external review pending**
 
 Scope: Vector Searchの設計のみ。実装、`ask`、LLM回答生成、Contradiction Detection、
 Memory Consolidationは含まない。
@@ -341,6 +341,12 @@ Relatedからvector検索したり2-hop展開したりしない。Link strength�
 6. batch transactionでembedding cacheとvector backendをupsert。
 7. 失敗batchを報告し、再実行で続行。Memory Markdownは一切書かない。
 
+Sprint 4B実装では`EmbeddingService`がこのflowを担当する。DB本文読込はmemory_id keyset、
+provider/DB read/commit batchは独立した中央policy、retryは`EmbeddingTransientError`だけを対象に
+bounded exponential backoffとする。各成功commit chunkはcanonical保存→backend `sync_upsert`→
+commitの順で確定する。不正output batchは保存せず、途中失敗時の確定済みbatchはresumeでskipする。
+新profileのpartial cacheは残す一方、active pointer/backend ready stateは全件+build成功後のみ更新する。
+
 ### query
 
 1. lexical channelとquery embedding/vector channelを実行。
@@ -470,6 +476,9 @@ core dependency化と本番adapter実装はこの判定には含めない。
 - DB repository、sync/rebuild、invalidation、resume、CLI管理command。
 - local deterministic fakeでreindex完全復元を先に保証。
 - production providerはまだ1種類に限定し、LLM interfaceは作らない。
+
+実装済み（外部レビュー待ち）。production providerとSqliteVecBackendは意図的に未実装。
+管理CLIは独立した`embeddings status/sync/rebuild`を採用し、通常`reindex`とは接続しない。
 
 ### Sprint 4C — vector and hybrid primary retrieval
 
