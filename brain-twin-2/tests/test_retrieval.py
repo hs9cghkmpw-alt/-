@@ -20,13 +20,14 @@ def _memory(conn, memory_id, content, *, status="active", importance=3, date="20
     )
 
 
-def _link(conn, source, target, relation="same_topic", reason="shared topic"):
+def _link(conn, source, target, relation="same_topic", reason="shared topic", strength=0.25):
     db.upsert_link(
         conn,
         source_memory_id=source,
         target_memory_id=target,
         relation_type=relation,
         reason=reason,
+        strength=strength,
         created_at="2026-08-10T00:00:00+00:00",
     )
 

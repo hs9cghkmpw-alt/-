@@ -53,12 +53,16 @@ from brain_twin.models import ExtractedEntity
 # id集合をこの単位で分割してから問い合わせる(_chunked参照)。
 _ID_QUERY_CHUNK_SIZE = 500
 
+# strength導入前は実値が正本Markdownにも存在しない。旧Entity抽出の誤検出を
+# relation_typeだけで強く扱わないよう、全legacy linkを一律の弱い値にする。
+LEGACY_LINK_STRENGTH = 0.25
+
 
 def _chunked(items: list[str], size: int = _ID_QUERY_CHUNK_SIZE) -> Iterator[list[str]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
 
-SCHEMA_SQL = """
+SCHEMA_SQL = f"""
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS raw_logs (
@@ -116,6 +120,7 @@ CREATE TABLE IF NOT EXISTS links (
     target_memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     relation_type      TEXT NOT NULL,
     reason             TEXT NOT NULL DEFAULT '',
+    strength           REAL NOT NULL DEFAULT {LEGACY_LINK_STRENGTH},
     created_at         TEXT NOT NULL,
     UNIQUE (source_memory_id, target_memory_id, relation_type)
 );
@@ -175,6 +180,9 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
 def _apply_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     _ensure_column(conn, "links", "reason", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(
+        conn, "links", "strength", f"REAL NOT NULL DEFAULT {LEGACY_LINK_STRENGTH}"
+    )
     _ensure_column(conn, "memory_entities", "confidence", "REAL NOT NULL DEFAULT 1.0")
     _ensure_column(conn, "memory_entities", "method", "TEXT NOT NULL DEFAULT ''")
     conn.commit()
@@ -407,14 +415,24 @@ def find_candidates_by_time_range(conn: sqlite3.Connection, start_iso: str, end_
     return {r[0] for r in rows}
 
 
-def upsert_link(conn: sqlite3.Connection, *, source_memory_id: str, target_memory_id: str, relation_type: str, reason: str, created_at: str) -> None:
+def upsert_link(
+    conn: sqlite3.Connection,
+    *,
+    source_memory_id: str,
+    target_memory_id: str,
+    relation_type: str,
+    reason: str,
+    strength: float = LEGACY_LINK_STRENGTH,
+    created_at: str,
+) -> None:
     conn.execute(
         """
-        INSERT INTO links (source_memory_id, target_memory_id, relation_type, reason, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(source_memory_id, target_memory_id, relation_type) DO NOTHING
+        INSERT INTO links (source_memory_id, target_memory_id, relation_type, reason, strength, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_memory_id, target_memory_id, relation_type) DO UPDATE SET
+            reason=excluded.reason, strength=excluded.strength, created_at=excluded.created_at
         """,
-        (source_memory_id, target_memory_id, relation_type, reason, created_at),
+        (source_memory_id, target_memory_id, relation_type, reason, strength, created_at),
     )
 
 
@@ -423,6 +441,7 @@ class LinkRow:
     target_memory_id: str
     relation_type: str
     reason: str
+    strength: float
 
 
 @dataclass(frozen=True)
@@ -438,16 +457,39 @@ class RelatedLinkRow:
     importance: int
     relation_type: str
     reason: str
+    strength: float
     direction: str
+
+
+@dataclass(frozen=True)
+class RelatedCandidateRow:
+    """Ranking用の軽量Link情報。Memory本文は意図的に含めない。"""
+
+    primary_memory_id: str
+    memory_id: str
+    importance: int
+    relation_type: str
+    reason: str
+    strength: float
+    direction: str
+
+
+@dataclass(frozen=True)
+class MemoryDetailRow:
+    memory_id: str
+    title: str
+    content: str
+    type: str
+    event_date: str
 
 
 def links_for_memory(conn: sqlite3.Connection, memory_id: str) -> list[LinkRow]:
     """source側から見たリンクのみを返す(このMemoryが起点になっているもの)。"""
     rows = conn.execute(
-        "SELECT target_memory_id, relation_type, reason FROM links WHERE source_memory_id = ?",
+        "SELECT target_memory_id, relation_type, reason, strength FROM links WHERE source_memory_id = ?",
         (memory_id,),
     ).fetchall()
-    return [LinkRow(target_memory_id=r[0], relation_type=r[1], reason=r[2]) for r in rows]
+    return [LinkRow(target_memory_id=r[0], relation_type=r[1], reason=r[2], strength=r[3]) for r in rows]
 
 
 def outgoing_links_for_memory(conn: sqlite3.Connection, memory_id: str) -> list[RelatedLinkRow]:
@@ -471,6 +513,66 @@ def related_links_for_memories(conn: sqlite3.Connection, memory_ids: list[str]) 
     return rows
 
 
+def related_link_candidates_for_memories(
+    conn: sqlite3.Connection, memory_ids: list[str]
+) -> list[RelatedCandidateRow]:
+    """Primary集合の1-hop候補を本文なしで取得する。ranking前の全本文ロードを避ける。"""
+    if not memory_ids:
+        return []
+    rows: list[RelatedCandidateRow] = []
+    for batch in _chunked(memory_ids):
+        rows.extend(_related_link_candidates(conn, batch, direction="outgoing"))
+        rows.extend(_related_link_candidates(conn, batch, direction="incoming"))
+    return rows
+
+
+def _related_link_candidates(
+    conn: sqlite3.Connection, memory_ids: list[str], *, direction: str
+) -> list[RelatedCandidateRow]:
+    placeholders = ",".join("?" for _ in memory_ids)
+    if direction == "outgoing":
+        primary_column = "l.source_memory_id"
+        related_column = "l.target_memory_id"
+    elif direction == "incoming":
+        primary_column = "l.target_memory_id"
+        related_column = "l.source_memory_id"
+    else:
+        raise ValueError(f"unknown link direction: {direction}")
+    records = conn.execute(
+        f"""
+        SELECT {primary_column}, m.id, m.importance, l.relation_type,
+               l.reason, l.strength
+        FROM links l
+        JOIN memories m ON m.id = {related_column}
+        WHERE {primary_column} IN ({placeholders}) AND m.status = 'active'
+        ORDER BY {primary_column}, m.id, l.relation_type, l.id
+        """,
+        memory_ids,
+    ).fetchall()
+    return [RelatedCandidateRow(*row, direction=direction) for row in records]
+
+
+def memory_details_by_ids(
+    conn: sqlite3.Connection, memory_ids: list[str]
+) -> dict[str, MemoryDetailRow]:
+    """選抜済みMemoryだけの表示詳細を取得する。大きなID集合にもchunkingで対応する。"""
+    result: dict[str, MemoryDetailRow] = {}
+    for batch in _chunked(memory_ids):
+        placeholders = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"""
+            SELECT id, title, content, type, event_date
+            FROM memories
+            WHERE id IN ({placeholders}) AND status = 'active'
+            """,
+            batch,
+        ).fetchall()
+        for row in rows:
+            detail = MemoryDetailRow(*row)
+            result[detail.memory_id] = detail
+    return result
+
+
 def _related_links(
     conn: sqlite3.Connection, memory_ids: list[str], *, direction: str
 ) -> list[RelatedLinkRow]:
@@ -488,7 +590,7 @@ def _related_links(
     records = conn.execute(
         f"""
         SELECT {primary_column}, m.id, m.title, m.content, m.type,
-               m.event_date, m.importance, l.relation_type, l.reason
+               m.event_date, m.importance, l.relation_type, l.reason, l.strength
         FROM links l
         JOIN memories m ON m.id = {related_column}
         WHERE {primary_column} IN ({placeholders}) AND m.status = 'active'

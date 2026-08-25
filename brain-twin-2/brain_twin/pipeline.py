@@ -58,7 +58,7 @@ def _suggest_links(
 
 def _apply_link_suggestions(memory: Memory, suggestions: list[linking.LinkSuggestion], created_at_iso: str) -> None:
     """frontmatter用の links(Obsidian向け、重複targetは1つにまとめる)と、
-    reindexや再実行時の復元に使う link_details(target/relation_type/reason/created_at)
+    reindexや再実行時の復元に使う link_details(target/relation_type/reason/strength/created_at)
     の両方をMemoryへセットする。
 
     created_atをここで固定して各link_detailsへ埋め込むのは、reindexが
@@ -75,6 +75,7 @@ def _apply_link_suggestions(memory: Memory, suggestions: list[linking.LinkSugges
             "target": s.target_memory_id,
             "relation_type": s.relation_type,
             "reason": s.reason,
+            "strength": s.strength,
             "created_at": created_at_iso,
         }
         for s in suggestions

@@ -16,45 +16,36 @@ Last updated: 2026-08-25
 - Phase 3 — Retrieval:
   - Associative Retrieval (1-hop outgoing + incoming links): **implemented**
   - Timeline Search (`event_date` range filtering): **implemented**
-  - Final hardening review: **pending 2 fixes before Phase 3 is declared complete**
+  - Final hardening review: **2 fixes implemented; CI/review confirmation pending**
 
 ## Last known good implementation
 
-- Implementation commit: `bfc679d8c13d549a637319af672a118d271f2f79`
-- Commit title: `brain-twin-2: Phase 3 associative retrieval and timeline search`
-- Local/CI test count: **117 passed**
-- GitHub Actions run: `32797928602`
-- GitHub Actions result: **success**
+- Implementation commit: this review-fix commit (see Git history)
+- Commit title: `brain-twin-2: preserve link strength in retrieval`
+- Local test count: **123 passed**
+- GitHub Actions for this commit: **pending push/verification**
+- Previous successful run: `32797928602` (`bfc679d`, **success**)
 
-## Active review fixes — do these before Vector Search
+## Completed review fixes — verify before Vector Search
 
 ### 1. Persist real link strength through Retrieval
 
-Phase 2 computes a real `LinkSuggestion.strength`, including entity-confidence-aware strength. Phase 3 currently reconstructs ranking from fixed relation-type weights, which can accidentally make a low-confidence `same_entity` stronger than `same_topic` and reintroduce a problem already fixed in Phase 2.
+Phase 2の実 `LinkSuggestion.strength` をMarkdown `link_details`とSQLiteへ保存し、
+Retrievalも固定relation weightではなく保存値の合計でrankingする。legacy Linkは
+relation種別によらない保守的なstrength `0.25`へ非破壊migration/reindexする。
 
-Required direction:
-
-- persist `strength` in Markdown `link_details`
-- persist the same value in SQLite `links`
-- restore it faithfully through process / reindex / reconcile / crash recovery
-- provide a conservative backward-compatible fallback for old link details without strength
-- Retrieval ranking must use persisted strength rather than fixed relation-type priority
+- process / reindex / reconcile / crash recoveryで同じstrengthを復元
+- strength列の無い既存DBはconnect時に非破壊self-heal
 
 ### 2. Avoid loading every related Memory body before applying `related_limit`
 
-Current associative retrieval can materialize every candidate Related Memory including `content`, then rank/dedupe and keep only the top N.
-
-Required direction:
-
-- obtain lightweight candidate/link signals first
-- rank/dedupe candidates
-- determine top `related_limit` IDs
-- fetch full Memory details only for selected IDs
-- preserve outgoing/incoming behavior, dedupe, inactive filtering, 1-hop limit, and deterministic ordering
+ranking前は本文を含まない軽量candidateだけを取得し、dedupe/ranking後の
+`related_limit` IDに限ってtitle/content/type/event_dateを取得する。
+outgoing/incoming、inactive除外、1-hop、決定的順序は維持する。
 
 ## Next authorized task
 
-**Phase 3 Retrieval hardening: implement the two review fixes above.**
+**このcommitのGitHub ActionsとレビューでPhase 3完了を確認後、Vector Searchへ進む。**
 
 Do **not** begin Vector Search, LLM integration, `ask`, Contradiction Detection, Memory Consolidation, or smartphone integration until these two fixes are reviewed and Phase 3 is explicitly marked complete.
 

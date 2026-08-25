@@ -17,6 +17,10 @@ from brain_twin import db, memory_io
 from brain_twin.models import Memory
 
 
+# 公開名は後方互換テストと説明用。値の正本はDB migrationと共有する。
+LEGACY_LINK_STRENGTH = db.LEGACY_LINK_STRENGTH
+
+
 def persist_memory(conn: sqlite3.Connection, memory: Memory) -> None:
     """MemoryのMarkdown内容(本体行 + entities)をSQLiteへ反映する。"""
     db.upsert_memory(
@@ -35,14 +39,16 @@ def persist_links(conn: sqlite3.Connection, memory_id: str, link_details: list[d
     新規生成時・reindex時・process再実行時(クラッシュからの復旧)・reconcile時の
     すべてでこの関数を通すことで、『SQLiteの内容は常にMarkdownの言っていることの写し』
     という原則を1箇所に集約する。fallback_created_atは、このfix以前に書かれた
-    link_details(created_atを持たない)を読んだ場合の後方互換用。"""
+    link_details(created_at/strengthを持たない)を読んだ場合の後方互換用。"""
     for detail in link_details:
         target = detail.get("target")
         if not target:
             continue
+        stored_strength = detail.get("strength")
         db.upsert_link(
             conn, source_memory_id=memory_id, target_memory_id=target,
             relation_type=detail.get("relation_type", "related"),
             reason=detail.get("reason", ""),
+            strength=float(stored_strength) if stored_strength is not None else LEGACY_LINK_STRENGTH,
             created_at=detail.get("created_at") or fallback_created_at,
         )

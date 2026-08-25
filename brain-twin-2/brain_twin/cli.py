@@ -77,7 +77,8 @@ def _cmd_search(args: argparse.Namespace) -> int:
             for relation in item.relations:
                 print(
                     f"  <- {relation.primary_memory_id} "
-                    f"({relation.direction} / {relation.relation_type}): {relation.reason}"
+                    f"({relation.direction} / {relation.relation_type} / "
+                    f"strength={relation.strength:.3f}): {relation.reason}"
                 )
             if args.verbose:
                 snippet = item.content if len(item.content) <= 120 else item.content[:120] + "…"

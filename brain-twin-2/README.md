@@ -54,6 +54,17 @@ Primary Memory のみを返します。`--related` を付けると、各 Primary
 1-hopだけ辿り、関連Memoryを別枠で表示します。Phase 2のLinkは一方向保存ですが、検索時は
 outgoing / incoming の両方向を探索します。
 
+Link生成時にPhase 2が計算した `strength` は、Memory frontmatterの `link_details` と
+SQLite `links.strength` の双方へ保存され、Retrievalはrelation_type固定優先度ではなく
+この実値を使います。同じRelated Memoryへの複数relationは、Link生成時と同じくstrengthの
+合計で集約し、Primary順位・importanceを決定的なtie-breakerにします。strength導入前の
+legacy `link_details` は生成時の実値を復元できず、旧Entity抽出の誤検出を強く扱わないため、
+relation_typeを問わず保守的な `0.25` として復元します。
+
+候補ranking時はMemory本文を取得せず、memory_id・relation・strength・importanceなどの
+軽量signalだけを扱います。`related_limit` 件を選抜した後、そのIDの表示詳細だけをSQLiteから
+取得するため、大量のincoming Linkがあっても全候補本文をPythonへロードしません。
+
 ```bash
 python brain.py search "Brain Twin"
 python brain.py search "Brain Twin" --related

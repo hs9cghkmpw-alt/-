@@ -29,3 +29,15 @@ Rules:
 - Commit: this handoff/bootstrap commit (see Git history)
 - Known issues: Phase 3 Retrieval still has two review hardening items documented in `CURRENT_STATE.md`: persisted link strength and lightweight Related-candidate retrieval before full body loading.
 - Next: complete those two Phase 3 hardening fixes; do not start Vector Search yet.
+
+## 2026-08-25 — Codex — Phase 3 Retrieval hardening
+
+- Branch: `brain-twin-dev`
+- Base: `bfc679d8c13d549a637319af672a118d271f2f79`（共有handoff commit `31dbc3e` をrebaseで保持）
+- Scope: Link生成時strengthの永続化・復元・ranking利用と、大量Related候補の本文遅延取得。
+- Changed: Markdown/SQLiteへ実strengthを保存し、legacyは一律`0.25`で非破壊移行。軽量candidateをrank/dedupeしてからtop N詳細だけ取得。
+- Tests: local `123 passed`; CLI process/search --related/reindex再検索とstrength完全一致を確認。
+- CI: push後に確認予定。
+- Commit: this commit
+- Known issues: Vector Search等の後続Phaseは未実装。
+- Next: CIとレビューでPhase 3完了確認後、別タスクでVector Search。

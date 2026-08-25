@@ -134,6 +134,31 @@ def test_connect_self_heals_pre_review_memory_entities_missing_confidence_column
         conn.commit()
 
 
+def test_connect_self_heals_links_table_missing_strength_column(config):
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(config.db_path))
+    conn.executescript(
+        """
+        CREATE TABLE links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_memory_id TEXT NOT NULL,
+            target_memory_id TEXT NOT NULL,
+            relation_type TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            UNIQUE (source_memory_id, target_memory_id, relation_type)
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    with db.connect(config) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(links)").fetchall()}
+        assert "strength" in columns
+        assert conn.execute("SELECT sql FROM sqlite_master WHERE name='links'").fetchone()
+
+
 def test_links_table_rejects_dangling_reference(config):
     """外部キー制約により、存在しないmemoryを指すlinkは拒否される(reindexの2周目分割が
     必要な理由そのものを保証するテスト)。"""

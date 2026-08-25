@@ -9,18 +9,12 @@ from brain_twin.config import Config
 
 DEFAULT_RELATED_LIMIT = 20
 
-RELATION_WEIGHTS = {
-    "same_entity": 3,
-    "same_topic": 2,
-    "temporal_relation": 1,
-}
-
-
 @dataclass(frozen=True)
 class RelatedRelation:
     primary_memory_id: str
     relation_type: str
     reason: str
+    strength: float
     direction: str
 
 
@@ -56,39 +50,48 @@ def retrieve(
 
     primary_id_set = set(primary_ids)
     primary_rank = {memory_id: rank for rank, memory_id in enumerate(primary_ids)}
-    related_by_id: dict[str, RelatedMemory] = {}
-    rows_by_id: dict[str, list[db.RelatedLinkRow]] = {}
-    for row in db.related_links_for_memories(conn, primary_ids):
+    candidates_by_id: dict[str, list[db.RelatedCandidateRow]] = {}
+    for row in db.related_link_candidates_for_memories(conn, primary_ids):
         if row.memory_id in primary_id_set:
             continue
-        rows_by_id.setdefault(row.memory_id, []).append(row)
-        related = related_by_id.setdefault(
-            row.memory_id,
-            RelatedMemory(
-                memory_id=row.memory_id,
-                title=row.title,
-                content=row.content,
-                type=row.type,
-                event_date=row.event_date,
-            ),
-        )
-        relation = RelatedRelation(
-            primary_memory_id=row.primary_memory_id,
-            relation_type=row.relation_type,
-            reason=row.reason,
-            direction=row.direction,
-        )
-        if relation not in related.relations:
-            related.relations.append(relation)
+        candidates_by_id.setdefault(row.memory_id, []).append(row)
 
-    def sort_key(item: RelatedMemory) -> tuple[int, int, int, str]:
-        rows = rows_by_id[item.memory_id]
+    def sort_key(memory_id: str) -> tuple[float, int, int, str]:
+        rows = candidates_by_id[memory_id]
+        # Phase 2のlink生成と同じく、同一Related Memoryへの複数根拠は実strengthを
+        # 合計する。根拠を保持したまま、relation_type固定優先度を再導入しないため。
+        combined_strength = sum(row.strength for row in rows)
         best_primary = min(primary_rank[row.primary_memory_id] for row in rows)
-        best_relation = max(RELATION_WEIGHTS.get(row.relation_type, 0) for row in rows)
         importance = max(row.importance for row in rows)
-        return (best_primary, -best_relation, -importance, item.memory_id)
+        return (-combined_strength, best_primary, -importance, memory_id)
 
-    related_items = sorted(related_by_id.values(), key=sort_key)[:related_limit]
+    selected_ids = sorted(candidates_by_id, key=sort_key)[:related_limit]
+    details_by_id = db.memory_details_by_ids(conn, selected_ids)
+    related_items: list[RelatedMemory] = []
+    for memory_id in selected_ids:
+        detail = details_by_id.get(memory_id)
+        if detail is None:
+            continue
+        relations: list[RelatedRelation] = []
+        for row in candidates_by_id[memory_id]:
+            relation = RelatedRelation(
+                primary_memory_id=row.primary_memory_id,
+                relation_type=row.relation_type,
+                reason=row.reason,
+                strength=row.strength,
+                direction=row.direction,
+            )
+            if relation not in relations:
+                relations.append(relation)
+        related_items.append(RelatedMemory(
+            memory_id=detail.memory_id,
+            title=detail.title,
+            content=detail.content,
+            type=detail.type,
+            event_date=detail.event_date,
+            relations=relations,
+        ))
+
     return RetrievalResult(primary=primary, related=related_items)
 
 

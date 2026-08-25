@@ -162,6 +162,13 @@ def test_process_links_memories_sharing_an_entity(config):
     assert f"[[{first.id}]]" in second.links
     relation_types = {d["relation_type"] for d in second.link_details if d["target"] == first.id}
     assert "same_entity" in relation_types
+    assert all("strength" in d for d in second.link_details)
+
+    with db.connect(config) as conn:
+        stored = conn.execute(
+            "SELECT strength FROM links WHERE source_memory_id = ?", (second.id,)
+        ).fetchall()
+    assert sorted(row[0] for row in stored) == sorted(d["strength"] for d in second.link_details)
 
 
 def test_process_does_not_link_unrelated_memories(config):
@@ -203,7 +210,7 @@ def test_entities_persisted_in_sqlite_after_process(config):
 
 
 _LINKS_QUERY = (
-    "SELECT source_memory_id, target_memory_id, relation_type, reason, created_at "
+    "SELECT source_memory_id, target_memory_id, relation_type, reason, strength, created_at "
     "FROM links ORDER BY 1, 2, 3"
 )
 _ENTITIES_QUERY = (
@@ -232,7 +239,7 @@ def test_reindex_reproduces_links_and_entities_from_markdown(config):
         links_after = sorted(conn.execute(_LINKS_QUERY).fetchall())
         entities_after = sorted(conn.execute(_ENTITIES_QUERY).fetchall())
 
-    # source/target/relation_type/reason に加えcreated_atまで完全一致することを確認する
+    # source/target/relation_type/reason/strength/created_atが完全一致することを確認する
     # (レビュー対応: 以前はreindexがMemory.created_atで代用し、link自体の生成時刻を
     # 失っていた)。
     assert links_after == links_before
