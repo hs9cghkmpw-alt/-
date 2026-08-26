@@ -28,13 +28,18 @@ import json
 import math
 import platform
 import random
-import resource
 import statistics
 import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass
+from datetime import date, timedelta
 from pathlib import Path
+
+try:
+    import resource  # POSIX only (Linux/macOS) -- not available on Windows.
+except ImportError:  # pragma: no cover -- exercised on Windows, not in this Linux CI
+    resource = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -140,6 +145,9 @@ def _time_repeated(fn, *, warm_repeats: int) -> LatencyStats:
     )
 
 
+_BENCHMARK_BASE_DATE = date(2016, 1, 1)
+
+
 def _generate_dataset(conn, *, count: int, seed: int, link_every: int) -> None:
     """Deterministic synthetic Memories, inserted directly into SQLite (not via Markdown --
     this benchmark measures the DB/vector-retrieval layer, not Markdown I/O)."""
@@ -155,7 +163,10 @@ def _generate_dataset(conn, *, count: int, seed: int, link_every: int) -> None:
             f"{', '.join(topics)}. Deterministic content for reproducible retrieval."
         )
         day_offset = index % 3650
-        event_date = f"{2016 + day_offset // 365}-{1 + (day_offset % 365) // 31:02d}-{1 + (day_offset % 31):02d}"
+        # date + timedelta guarantees a valid calendar date (unlike hand-rolled month/day
+        # arithmetic, which can produce e.g. Feb 30) while staying fully deterministic for a
+        # given seed/count.
+        event_date = (_BENCHMARK_BASE_DATE + timedelta(days=day_offset)).isoformat()
         db.upsert_memory(
             conn, id=memory_id, type="thought",
             created_at=f"{event_date}T00:00:00+00:00", event_date=event_date,
@@ -175,10 +186,21 @@ def _generate_dataset(conn, *, count: int, seed: int, link_every: int) -> None:
     conn.commit()
 
 
+def _peak_rss_kb() -> int | None:
+    """`resource` is POSIX-only (no Windows build). Never let memory-metric collection fail
+    the benchmark itself -- a missing/failing RSS reading degrades to `None`, not a crash."""
+    if resource is None:
+        return None
+    try:
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except Exception:  # pragma: no cover -- defensive; getrusage is not expected to raise on POSIX
+        return None
+
+
 def _machine_info() -> dict:
     import sqlite3
 
-    rusage_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    peak_rss_kb = _peak_rss_kb()
     return {
         "platform": platform.platform(),
         "system": platform.system(),
@@ -187,9 +209,14 @@ def _machine_info() -> dict:
         "python_version": platform.python_version(),
         "sqlite_version": sqlite3.sqlite_version,
         "cpu_count_logical": _cpu_count(),
-        # Linux reports ru_maxrss in KiB; other platforms may differ (documented, not
-        # normalized here -- this script has only been run on Linux so far).
-        "peak_rss_kb_at_report_time": rusage_kb,
+        # Linux/macOS report ru_maxrss in KiB via the stdlib `resource` module; Windows has no
+        # such module and no standard-library equivalent, so this is `None` there rather than
+        # requiring an optional dependency (e.g. psutil) just for a benchmark metric.
+        "peak_rss_kb_at_report_time": peak_rss_kb,
+        "rss_measurement": (
+            "kib_via_resource_ru_maxrss" if peak_rss_kb is not None
+            else "unavailable without optional dependency (e.g. psutil) on this platform"
+        ),
     }
 
 
@@ -228,7 +255,10 @@ def run_benchmark(*, count: int, dimension: int, seed: int, warm_repeats: int, l
         service.rebuild_backend()
         backend_only_rebuild_seconds = time.perf_counter() - start
 
-        # --- D/E/F/G. query latency ---
+        # --- D/E/F/G/H. query latency ---
+        # Note: "H" here (query-latency H_hybrid_plus_related_end_to_end) is a different key
+        # than phases["H_backend_only_rebuild_seconds"] above -- the two dicts are separate
+        # namespaces. Kept as H to match the task's requested metric name.
         query_word = TOPICS_POOL[seed % len(TOPICS_POOL)]
         with db.connect(config) as conn:
             lexical_stats = _time_repeated(
@@ -242,10 +272,22 @@ def run_benchmark(*, count: int, dimension: int, seed: int, warm_repeats: int, l
                 lambda: hybrid_search.hybrid_search(conn, query_word, provider, backend, limit=20),
                 warm_repeats=warm_repeats,
             )
+            # G: related-expansion overhead ONLY -- hybrid_search() is run once outside the
+            # timed callable, so this measures just retrieve_from_primary()'s own cost.
             hybrid_primary = hybrid_search.hybrid_search(conn, query_word, provider, backend, limit=20)
-            hybrid_related_stats = _time_repeated(
+            related_expansion_only_stats = _time_repeated(
                 lambda: retrieval.retrieve_from_primary(conn, hybrid_primary, related_limit=20),
                 warm_repeats=warm_repeats,
+            )
+            # H: true Hybrid + Related end-to-end -- both calls run inside the SAME timed
+            # callable on every sample (cold and each warm repeat), so this is the real
+            # combined latency a caller of `search --hybrid --related` actually pays.
+            def _hybrid_plus_related_end_to_end():
+                primary = hybrid_search.hybrid_search(conn, query_word, provider, backend, limit=20)
+                return retrieval.retrieve_from_primary(conn, primary, related_limit=20)
+
+            hybrid_plus_related_end_to_end_stats = _time_repeated(
+                _hybrid_plus_related_end_to_end, warm_repeats=warm_repeats
             )
 
         # --- I. SQLite DB file size ---
@@ -270,7 +312,13 @@ def run_benchmark(*, count: int, dimension: int, seed: int, warm_repeats: int, l
                 "D_lexical": asdict(lexical_stats),
                 "E_vector_exact_scan": asdict(vector_stats),
                 "F_hybrid": asdict(hybrid_stats),
-                "G_hybrid_plus_related": asdict(hybrid_related_stats),
+                # Related-expansion overhead only (hybrid_search() runs once, outside the
+                # timed callable) -- NOT the end-to-end "search --hybrid --related" latency.
+                "G_related_expansion_only": asdict(related_expansion_only_stats),
+                # True end-to-end: hybrid_search() + retrieve_from_primary() both inside the
+                # same timed callable on every sample -- this is what a caller of
+                # `search --hybrid --related` actually experiences.
+                "H_hybrid_plus_related_end_to_end": asdict(hybrid_plus_related_end_to_end_stats),
             },
             "I_db_size_bytes": db_size_bytes,
         }

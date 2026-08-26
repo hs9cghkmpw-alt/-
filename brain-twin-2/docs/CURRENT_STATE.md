@@ -1,6 +1,6 @@
 # Brain Twin 2 — Current State
 
-Last updated: 2026-08-25
+Last updated: 2026-08-26
 
 ## Active development context
 
@@ -23,23 +23,32 @@ Last updated: 2026-08-25
   - Sprint 4C vector + hybrid primary retrieval: architecture / Vector Search / Hybrid RRF /
     lazy detail fetch / availability gate / CLI / handoff protocol reviewed and approved.
     **Final hardening implemented; external review pending** (see below).
-  - Sprint 4D: **all planned validation implemented** — associative integration, CLI
-    hardening, Windows benchmark (run as a Linux-environment substitute; see below),
-    failure/recovery/migration/corruption validation. **External review pending.**
-    Phase 4 Vector Retrieval Core: validated / complete pending external review.
+  - Sprint 4D:
+    - associative integration: **reviewed GO**
+    - CLI hardening: **reviewed GO**
+    - failure/recovery/migration validation: **reviewed GO**
+    - Linux substitute ExactScan benchmark: **completed** (see
+      `docs/VECTOR_WINDOWS_BENCHMARK.md`; explicitly not the official Windows benchmark)
+    - Windows ExactScan benchmark: **pending** (no Windows machine available in this
+      session's environment)
+    - **Sprint 4D overall: not complete; Windows benchmark pending.**
     Production activation: pending (production embedding provider, production-scale vector
-    backend decision, and Japanese retrieval quality evaluation remain outstanding).
+    backend decision, and Japanese retrieval quality evaluation remain outstanding
+    regardless of the Windows benchmark's outcome).
 
 ## Last known good implementation
 
-- Implementation commit: `d8e46d5779e118dc93f9dbf835a0968ba5182edc`
-- Commit title: `brain-twin-2: Sprint 4D associative integration`
-- Local test count at that commit: **310 passed**
-- GitHub Actions run: `32878425146`
+- Implementation commit: `7b83e56f113630381a594e84898257ce3b1f946d`
+- Commit title: `brain-twin-2: Sprint 4D final validation (benchmark, recovery, CLI hardening)`
+- Local test count at that commit: **316 passed**
+- GitHub Actions run: `32976587537`
 - GitHub Actions result: **success** (headSha confirmed to match the pushed commit)
-- This round's Sprint 4D final validation work (CLI hardening, Windows/Linux-substitute
-  benchmark, failure/recovery/migration/corruption validation; see `WORKLOG.md`) builds on
-  top of this reviewed-pending baseline; see `WORKLOG.md` for this round's commit once pushed.
+- External review since this commit: associative integration GO, CLI hardening GO,
+  failure/recovery/migration validation GO. The benchmark portion required the three fixes
+  in "Sprint 4D benchmark final hardening" below before a Windows run could be attempted.
+- This round's benchmark final hardening (script portability fix, corrected end-to-end
+  metric, valid synthetic dates; see `WORKLOG.md`) builds on top of this reviewed baseline;
+  see `WORKLOG.md` for this round's commit once pushed.
 
 ## Completed review fixes — verify before Vector Search
 
@@ -130,15 +139,48 @@ malformed/corrupted-cache rejection) were validated against real DB fixtures —
 tests plus citations of pre-existing focused unit tests. Full results in
 `docs/VECTOR_RECOVERY_VALIDATION.md`.
 
+### 8. Sprint 4D benchmark final hardening
+
+External review of the Sprint 4D benchmark required three fixes before a Windows run could
+even be attempted, all in `scripts/vector_benchmark.py`:
+
+1. The script imported the POSIX-only `resource` module unconditionally at top level, which
+   has no Windows build and would have crashed the script before it could run there at all.
+   Now guarded with `try`/`except ImportError`; `_machine_info()`/`_peak_rss_kb()` degrade to
+   `None` plus an explanatory `rss_measurement` string instead of raising, and no optional
+   dependency (e.g. `psutil`) was added.
+2. The original `G_hybrid_plus_related` metric only measured `retrieval.retrieve_from_primary()`
+   on a Hybrid Primary result computed once, *outside* the timed loop — i.e.
+   related-expansion overhead only, not genuine end-to-end `search --hybrid --related`
+   latency. Kept (renamed `G_related_expansion_only`) and a new
+   `H_hybrid_plus_related_end_to_end` metric added that calls `hybrid_search()` and
+   `retrieve_from_primary()` together inside the same timed callable on every sample.
+3. Synthetic `event_date` generation used hand-rolled month/day arithmetic that could produce
+   invalid calendar dates (e.g. `2016-02-30`); replaced with `date + timedelta`, which always
+   yields a valid, deterministic date for a given seed/count.
+
+The original Linux benchmark run is kept in `docs/VECTOR_WINDOWS_BENCHMARK.md` as an
+explicitly-relabeled historical record (its `G` column was related-expansion-only, not
+end-to-end); a corrected Linux re-measurement with the fixed script was added alongside it.
+Windows numbers remain pending in their own section of that document — never merged with the
+Linux figures.
+
 ## Next authorized task
 
-**Sprint 4D: all planned validation implemented; external review pending.**
+**Sprint 4D: implemented and validated; external review pending.** Sprint 4D overall is
+**not complete** — the Windows ExactScan benchmark is still pending (this session has no
+Windows machine). Associative integration, CLI hardening, and failure/recovery/migration
+validation each already have external review GO; the benchmark's code fixes are done and a
+corrected Linux-substitute re-measurement exists, but the official Windows run has not
+happened.
 
 Do **not** begin Sprint 4E-equivalent scope, a production embedding provider,
 `SqliteVecBackend`, `ask`, Contradiction Detection, Memory Consolidation, or smartphone
-integration until this implementation is reviewed and explicitly approved. A Windows-machine
-re-run of the benchmark (this round's was an explicit Linux substitute) and, if the reviewer
-wants it, a 100k-scale data point remain open follow-ups but are not blockers to review.
+integration until Sprint 4D is complete and reviewed. When a session with access to the actual
+Windows development machine picks this up, it should run the official Windows benchmark using
+`scripts/vector_benchmark.py` (now portable) and record results in
+`docs/VECTOR_WINDOWS_BENCHMARK.md`'s "Windows official run" section — do not estimate,
+extrapolate, or reuse the Linux figures in place of a real Windows run.
 
 ## Core invariants
 

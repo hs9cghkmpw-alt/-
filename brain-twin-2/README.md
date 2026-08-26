@@ -673,33 +673,44 @@ production embedding provider(sentence-transformers/OpenAI/Ollama等)と`SqliteV
 adapterはSprint 4Cでも意図的に未実装のまま(`ExactScanBackend` + fake/recording providerのみで
 検索architecture自体を完成させる方針)。
 
-### Vector Search Sprint 4D(全項目実装、外部レビュー待ち)
+### Vector Search Sprint 4D(実装・validated、Windows benchmark pending — 全体は未完了)
 
-Sprint 4Dで計画された項目はすべて実装した(**Phase 4 Vector Retrieval Core: validated /
-complete pending external review。Production activation: pending**)。
+Sprint 4Dは以下の状態(**Sprint 4D: implemented and validated; external review pending。
+Windows ExactScan benchmarkが完了するまでSprint 4D全体としては未完了**、
+Phase 4 Vector Retrieval Core / Production activationについても同様に自己COMPLETE宣言は
+しない)。
 
-- **Associative Retrieval統合**: `retrieval.py`の1-hop展開ロジックを
+- **Associative Retrieval統合**: **reviewed GO**。`retrieval.py`の1-hop展開ロジックを
   `retrieve_from_primary()`として抽出し、primary結果の型に依存しない(`memory_id`属性
   さえあればよい)Protocol/Genericにした。既存の`retrieve()`(plain lexical検索用)は
   この`retrieve_from_primary()`を呼ぶよう委譲するだけになり、挙動・出力は変更していない。
   CLI `search --vector --related` / `search --hybrid --related` は、Vector/Hybrid
   Primaryの結果をそのまま`retrieve_from_primary()`へ渡して1-hop関連Memoryを取得し、
   従来の`--related`単体時と同じ書式で表示する。
-- **CLI hardening**: `--related-limit`に負値を指定した場合、embedding
+- **CLI hardening**: **reviewed GO**。`--related-limit`に負値を指定した場合、embedding
   config/provider/vector検索を一切開始せずに`[NG]`errorを返すようにした
   (plain/`--vector`/`--hybrid`すべて同一契約)。以前は`--vector`/`--hybrid`との
   併用時にPrimary結果を表示してから初めてvalidation errorになっていた。
-- **Windows benchmark**: `scripts/vector_benchmark.py`(1k/10k Memories ×
-  dimension 384/768、`ExactScanBackend` reference/fallback専用、production provider
-  なし)。**このセッションはLinuxのリモート実行環境のため、実機のWindows上ではなく
-  この環境での代替実行として記録**した。詳細は`docs/VECTOR_WINDOWS_BENCHMARK.md`。
-  Windows実機での正式な再測定はまだ必要。
-- **Failure/recovery/migration/corruption validation**: provider途中failure resume、
-  profile switch failure時の旧active維持、backend index損失からの
+- **Failure/recovery/migration/corruption validation**: **reviewed GO**。provider途中
+  failure resume、profile switch failure時の旧active維持、backend index損失からの
   `rebuild_backend()`復旧、stale MemoryのVector除外/Hybrid lexical経由残存/resync復旧、
   inactive/delete除外、**SQLite全削除→reindex→resync**の完全復旧、legacy schema
   self-heal(複数gapを同時に持つ実DB fixtureで検証)、malformed/破損cacheのfail-safeを
   実DB fixtureで確認した。詳細は`docs/VECTOR_RECOVERY_VALIDATION.md`。
+- **Windows benchmark**: **Linux substitute run: completed / Windows実機run: pending**。
+  `scripts/vector_benchmark.py`(1k/10k Memories × dimension 384/768、`ExactScanBackend`
+  reference/fallback専用、production providerなし)。外部レビューでbenchmark scriptに
+  3件の修正が必要と指摘され、今回対応した: (1) module top-levelの`import resource`が
+  Windowsで失敗する問題(`try`/`except ImportError`でplatform-independentに)、
+  (2) 旧`G_hybrid_plus_related`は実際にはrelated expansion overheadのみの計測だった
+  問題(hybrid_search呼び出しがtimed loop外だったため)を、`G_related_expansion_only`
+  として維持しつつ、新設の`H_hybrid_plus_related_end_to_end`(毎sample内で
+  hybrid_search+retrieve_from_primaryを同一timed callableで実行)で真のend-to-end値を
+  計測、(3) synthetic `event_date`の手計算がFeb 30等invalid dateを生成しうる問題を
+  `date + timedelta`で修正。修正後にLinuxで再測定した値も追加した(捏造ではなく実測)。
+  **このセッションはLinuxのリモート実行環境のためWindows実機での正式benchmarkはまだ
+  未実施**。詳細・両方の実測値は`docs/VECTOR_WINDOWS_BENCHMARK.md`
+  (「Windows official run」セクションはpendingのまま)。
 
 production embedding providerと`SqliteVecBackend`本番adapterは引き続き未実装であり、
 上記のいずれも「production Vector Search性能/完了」を意味しない。
@@ -707,6 +718,9 @@ production embedding providerと`SqliteVecBackend`本番adapterは引き続き�
 ### 次にやるべきPhase
 
 Phase 1〜3(Memory Foundation、Automatic Memory Worker、Retrieval)は完了している。
-Vector Search(Phase 4)はSprint 4A〜4Dまで実装済みで、いずれも現時点で外部レビュー待ち。
-次に許可されるまでは、production embedding provider・`SqliteVecBackend`本番adapter・
-`ask`/LLM・Contradiction Detection・Memory Consolidation・smartphone統合には進まない。
+Vector Search(Phase 4)はSprint 4A〜4Dまで実装済み。Sprint 4Dのうち associative
+integration・CLI hardening・failure/recovery/migration validationはreviewed GO済みだが、
+**Windows ExactScan benchmarkが未実施のため、Sprint 4D全体としてはまだ完了していない**。
+次に許可されるまでは、Sprint 4E相当のscope・production embedding provider・
+`SqliteVecBackend`本番adapter・`ask`/LLM・Contradiction Detection・Memory Consolidation・
+smartphone統合には進まない。

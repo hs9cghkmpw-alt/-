@@ -1,16 +1,18 @@
 # Vector Search Design（設計レビュー用）
 
 Status: **Sprint 4A complete. Sprint 4B complete. Sprint 4C implemented; external review
-pending. Sprint 4D: all planned validation implemented (associative integration, benchmark,
-failure/recovery/migration/corruption validation, CLI hardening); external review pending.
-Benchmark ran on this session's Linux environment as an explicit substitute for the requested
-Windows machine — see `docs/VECTOR_WINDOWS_BENCHMARK.md`.**
+pending. Sprint 4D: implemented and validated; external review pending on the whole, though
+associative integration, CLI hardening, and failure/recovery/migration validation each already
+have external review GO. Sprint 4D overall is NOT complete: the Windows ExactScan benchmark
+is still pending (this session has no Windows machine). A Linux-substitute benchmark run
+exists in `docs/VECTOR_WINDOWS_BENCHMARK.md`, explicitly labeled as a substitute, not the
+official result.**
 
-Phase 4 Vector Retrieval Core: validated / complete pending external review.
-Production activation: pending. Known remaining production dependencies: a production
-embedding provider, a production-scale vector backend decision (e.g. `SqliteVecBackend`), and
-Japanese retrieval quality evaluation — none of these three exist in this project yet, and
-none of the validation below substitutes for them.
+Phase 4 Vector Retrieval Core and Production activation are NOT declared complete while the
+Windows benchmark is outstanding. Known remaining production dependencies regardless: a
+production embedding provider, a production-scale vector backend decision (e.g.
+`SqliteVecBackend`), and Japanese retrieval quality evaluation — none of these three exist in
+this project yet, and none of the validation below substitutes for them.
 
 Scope: Vector Searchの設計のみ。実装、`ask`、LLM回答生成、Contradiction Detection、
 Memory Consolidationは含まない。
@@ -532,15 +534,21 @@ final hardeningとして実施(2026-08-25)。外部レビュー待ち。
   1-hop展開するようになり、`--vector --related` / `--hybrid --related`はVector/Hybrid
   Primaryの結果を起点に関連Memoryを表示する(黙ってlexicalの1-hop展開に切り替えたりしない)。
 
-### Sprint 4D — associative integration and hardening(一部実装、外部レビュー待ち)
+### Sprint 4D — associative integration and hardening(実装・validated、Windows benchmark pending)
 
-- hybrid Primaryを既存1-hop expansionへ接続。**実装済み**
+- hybrid Primaryを既存1-hop expansionへ接続。**実装済み・reviewed GO**
   (`retrieval.retrieve_from_primary()`、`brain_twin/cli.py`の`--vector --related` /
   `--hybrid --related`配線、`tests/test_retrieval.py`・`tests/test_search_cli.py`)。
-- 10k以上のWindows benchmark、failure/recovery/migration test。**未実施**
+- CLI hardening(負のrelated-limit)。**実装済み・reviewed GO**。
+- failure/recovery/migration test。**実装済み・reviewed GO**
+  (`docs/VECTOR_RECOVERY_VALIDATION.md`)。
+- 10k以上のWindows benchmark。**Linux substitute run: completed
+  (`docs/VECTOR_WINDOWS_BENCHMARK.md`)。Windows実機run: pending**
   (このセッションはLinuxのリモート実行環境であり、実機のWindows開発機ではないため)。
-- 設計値を評価結果で調整し、Vector Search完了レビューへ提出。**上記のbenchmark/
-  failure-recovery検証が終わるまで未着手**。
+  benchmark scriptのWindows portability修正・related expansion-only/end-to-end metric分離・
+  synthetic event_date有効化はこのラウンドで対応済み。
+- 設計値を評価結果で調整し、Vector Search完了レビューへ提出。**Windows benchmark完了まで
+  未着手**。
 
 ## 15. 未解決事項（設計レビューで決める）
 
