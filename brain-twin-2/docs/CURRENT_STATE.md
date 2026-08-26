@@ -22,33 +22,37 @@ Last updated: 2026-08-26
   - Sprint 4B rebuildable embedding cache: **complete** (external review GO received)
   - Sprint 4C vector + hybrid primary retrieval: architecture / Vector Search / Hybrid RRF /
     lazy detail fetch / availability gate / CLI / handoff protocol reviewed and approved.
-    **Final hardening implemented; external review pending** (see below).
+    **Final hardening: reviewed GO / COMPLETE** (see below).
   - Sprint 4D:
     - associative integration: **reviewed GO**
     - CLI hardening: **reviewed GO**
     - failure/recovery/migration validation: **reviewed GO**
+    - benchmark harness final hardening (Windows portability, corrected end-to-end metric,
+      valid synthetic dates): **reviewed GO**
     - Linux substitute ExactScan benchmark: **completed** (see
       `docs/VECTOR_WINDOWS_BENCHMARK.md`; explicitly not the official Windows benchmark)
-    - Windows ExactScan benchmark: **pending** (no Windows machine available in this
-      session's environment)
-    - **Sprint 4D overall: not complete; Windows benchmark pending.**
+    - Windows official ExactScan benchmark: **pending** (no Windows machine available in
+      this session's environment; this is Sprint 4D's sole remaining blocker per external
+      review)
+    - **Sprint 4D overall: not complete; Windows official benchmark pending.**
     Production activation: pending (production embedding provider, production-scale vector
     backend decision, and Japanese retrieval quality evaluation remain outstanding
     regardless of the Windows benchmark's outcome).
 
 ## Last known good implementation
 
-- Implementation commit: `7b83e56f113630381a594e84898257ce3b1f946d`
-- Commit title: `brain-twin-2: Sprint 4D final validation (benchmark, recovery, CLI hardening)`
-- Local test count at that commit: **316 passed**
-- GitHub Actions run: `32976587537`
+- Implementation commit: `7b7f9d0ef2d5150227dea24a6b2fc1db2186c1a1`
+- Commit title: `brain-twin-2: Sprint 4D benchmark final hardening`
+- Local test count at that commit: **322 passed**
+- GitHub Actions run: `33011147727`
 - GitHub Actions result: **success** (headSha confirmed to match the pushed commit)
-- External review since this commit: associative integration GO, CLI hardening GO,
-  failure/recovery/migration validation GO. The benchmark portion required the three fixes
-  in "Sprint 4D benchmark final hardening" below before a Windows run could be attempted.
-- This round's benchmark final hardening (script portability fix, corrected end-to-end
-  metric, valid synthetic dates; see `WORKLOG.md`) builds on top of this reviewed baseline;
-  see `WORKLOG.md` for this round's commit once pushed.
+- External review since this commit: Sprint 4C final hardening GO/COMPLETE; Sprint 4D
+  associative integration GO, CLI hardening GO, failure/recovery/migration validation GO,
+  benchmark harness final hardening GO. Sprint 4D's sole remaining blocker per this review:
+  the Windows official ExactScan benchmark has not been run.
+- This round attempted the Windows official benchmark but ran in this session's Linux
+  environment (no Windows machine available); see `docs/VECTOR_WINDOWS_BENCHMARK.md` and
+  `WORKLOG.md` for what was and was not done, and this round's commit once pushed.
 
 ## Completed review fixes — verify before Vector Search
 
@@ -165,14 +169,29 @@ end-to-end); a corrected Linux re-measurement with the fixed script was added al
 Windows numbers remain pending in their own section of that document — never merged with the
 Linux figures.
 
+### 9. Sprint 4D: attempted Windows official benchmark (this round)
+
+This round's instruction required the official Windows ExactScan benchmark and a small test
+fix. `tests/test_vector_benchmark.py::test_generated_event_dates_are_deterministic_across_runs`
+was comparing `row[0]` from `SELECT id, event_date FROM memories`, i.e. comparing `id` (which
+is deterministic by construction regardless of date generation) rather than `event_date` —
+fixed to `SELECT event_date FROM memories` so the test actually exercises date-generation
+determinism. `docs/CURRENT_STATE.md` was synced to reflect Sprint 4C final hardening's
+external review GO/COMPLETE and this round's benchmark-harness GO.
+
+The Windows official benchmark itself was **not run**: this session's environment is Linux
+(`platform.system() == "Linux"`), not the required Windows machine. No Windows numbers were
+estimated, extrapolated, or substituted from the existing Linux figures. This remains Sprint
+4D's sole outstanding item.
+
 ## Next authorized task
 
 **Sprint 4D: implemented and validated; external review pending.** Sprint 4D overall is
-**not complete** — the Windows ExactScan benchmark is still pending (this session has no
-Windows machine). Associative integration, CLI hardening, and failure/recovery/migration
-validation each already have external review GO; the benchmark's code fixes are done and a
-corrected Linux-substitute re-measurement exists, but the official Windows run has not
-happened.
+**not complete** — the Windows official ExactScan benchmark is still pending (this session
+has no Windows machine, confirmed via `platform.system()`). Sprint 4C final hardening,
+Sprint 4D's associative integration, CLI hardening, failure/recovery/migration validation, and
+benchmark harness final hardening all already have external review GO; only the Windows
+benchmark run itself remains.
 
 Do **not** begin Sprint 4E-equivalent scope, a production embedding provider,
 `SqliteVecBackend`, `ask`, Contradiction Detection, Memory Consolidation, or smartphone

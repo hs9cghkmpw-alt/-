@@ -63,10 +63,10 @@ def test_generated_event_dates_are_deterministic_across_runs(tmp_path):
 
     with db.connect(config_a) as conn:
         vector_benchmark._generate_dataset(conn, count=50, seed=7, link_every=0)
-        dates_a = [row[0] for row in conn.execute("SELECT id, event_date FROM memories ORDER BY id").fetchall()]
+        dates_a = [row[0] for row in conn.execute("SELECT event_date FROM memories ORDER BY id").fetchall()]
     with db.connect(config_b) as conn:
         vector_benchmark._generate_dataset(conn, count=50, seed=7, link_every=0)
-        dates_b = [row[0] for row in conn.execute("SELECT id, event_date FROM memories ORDER BY id").fetchall()]
+        dates_b = [row[0] for row in conn.execute("SELECT event_date FROM memories ORDER BY id").fetchall()]
 
     assert dates_a == dates_b
 
