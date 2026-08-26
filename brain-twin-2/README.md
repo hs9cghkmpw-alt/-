@@ -673,28 +673,40 @@ production embedding provider(sentence-transformers/OpenAI/Ollama等)と`SqliteV
 adapterはSprint 4Cでも意図的に未実装のまま(`ExactScanBackend` + fake/recording providerのみで
 検索architecture自体を完成させる方針)。
 
-### Vector Search Sprint 4D(一部実装、外部レビュー待ち)
+### Vector Search Sprint 4D(全項目実装、外部レビュー待ち)
 
-Sprint 4Dのうち、**Hybrid/Vector PrimaryとAssociative Retrievalの統合**のみ実装した。
+Sprint 4Dで計画された項目はすべて実装した(**Phase 4 Vector Retrieval Core: validated /
+complete pending external review。Production activation: pending**)。
 
-- `retrieval.py`の1-hop展開ロジックを`retrieve_from_primary()`として抽出し、
-  primary結果の型に依存しない(`memory_id`属性さえあればよい)Protocol/Genericにした。
-  既存の`retrieve()`(plain lexical検索用)はこの`retrieve_from_primary()`を呼ぶよう
-  委譲するだけになり、挙動・出力は変更していない
-  (`tests/test_retrieval.py`の既存テストは無変更のまま全てPASSする)。
-- CLI `search --vector --related` / `search --hybrid --related` は、Vector/Hybrid
+- **Associative Retrieval統合**: `retrieval.py`の1-hop展開ロジックを
+  `retrieve_from_primary()`として抽出し、primary結果の型に依存しない(`memory_id`属性
+  さえあればよい)Protocol/Genericにした。既存の`retrieve()`(plain lexical検索用)は
+  この`retrieve_from_primary()`を呼ぶよう委譲するだけになり、挙動・出力は変更していない。
+  CLI `search --vector --related` / `search --hybrid --related` は、Vector/Hybrid
   Primaryの結果をそのまま`retrieve_from_primary()`へ渡して1-hop関連Memoryを取得し、
-  従来の`--related`単体時と同じ書式(`関連Memory:`セクション)で表示するようになった。
-  もう黙ってlexicalの1-hop展開に切り替えたりはしない(常にPrimaryと同じ検索channelの
-  結果を起点に展開する)。
-- Sprint 4Dの残り2項目(**10k件規模のWindows benchmark**、**障害・復旧・migrationの
-  検証**)は、このセッションがLinuxのリモート実行環境であり実機のWindows開発機では
-  ないため未実施。実際のWindows開発機での評価が必要。
+  従来の`--related`単体時と同じ書式で表示する。
+- **CLI hardening**: `--related-limit`に負値を指定した場合、embedding
+  config/provider/vector検索を一切開始せずに`[NG]`errorを返すようにした
+  (plain/`--vector`/`--hybrid`すべて同一契約)。以前は`--vector`/`--hybrid`との
+  併用時にPrimary結果を表示してから初めてvalidation errorになっていた。
+- **Windows benchmark**: `scripts/vector_benchmark.py`(1k/10k Memories ×
+  dimension 384/768、`ExactScanBackend` reference/fallback専用、production provider
+  なし)。**このセッションはLinuxのリモート実行環境のため、実機のWindows上ではなく
+  この環境での代替実行として記録**した。詳細は`docs/VECTOR_WINDOWS_BENCHMARK.md`。
+  Windows実機での正式な再測定はまだ必要。
+- **Failure/recovery/migration/corruption validation**: provider途中failure resume、
+  profile switch failure時の旧active維持、backend index損失からの
+  `rebuild_backend()`復旧、stale MemoryのVector除外/Hybrid lexical経由残存/resync復旧、
+  inactive/delete除外、**SQLite全削除→reindex→resync**の完全復旧、legacy schema
+  self-heal(複数gapを同時に持つ実DB fixtureで検証)、malformed/破損cacheのfail-safeを
+  実DB fixtureで確認した。詳細は`docs/VECTOR_RECOVERY_VALIDATION.md`。
+
+production embedding providerと`SqliteVecBackend`本番adapterは引き続き未実装であり、
+上記のいずれも「production Vector Search性能/完了」を意味しない。
 
 ### 次にやるべきPhase
 
 Phase 1〜3(Memory Foundation、Automatic Memory Worker、Retrieval)は完了している。
-Vector Search(Phase 4)はSprint 4A〜4Cまで実装済み、Sprint 4Dは
-Associative Retrieval統合のみ実装済みで、いずれも現時点でレビュー待ち。
-次に許可されるまでは **Sprint 4Dの残り(10k件規模のWindows benchmark、障害・復旧・
-migrationの検証)** へは進まない。
+Vector Search(Phase 4)はSprint 4A〜4Dまで実装済みで、いずれも現時点で外部レビュー待ち。
+次に許可されるまでは、production embedding provider・`SqliteVecBackend`本番adapter・
+`ask`/LLM・Contradiction Detection・Memory Consolidation・smartphone統合には進まない。

@@ -23,21 +23,23 @@ Last updated: 2026-08-25
   - Sprint 4C vector + hybrid primary retrieval: architecture / Vector Search / Hybrid RRF /
     lazy detail fetch / availability gate / CLI / handoff protocol reviewed and approved.
     **Final hardening implemented; external review pending** (see below).
-  - Sprint 4D: **associative integration implemented** (Hybrid/Vector Primary connected to
-    the existing 1-hop expansion via `retrieval.retrieve_from_primary()`); **the 10k-scale
-    Windows benchmark and failure/recovery/migration validation have NOT been done** (this
-    session runs in a Linux remote execution environment, not the actual Windows dev
-    machine) — see below. External review pending for the implemented part.
+  - Sprint 4D: **all planned validation implemented** — associative integration, CLI
+    hardening, Windows benchmark (run as a Linux-environment substitute; see below),
+    failure/recovery/migration/corruption validation. **External review pending.**
+    Phase 4 Vector Retrieval Core: validated / complete pending external review.
+    Production activation: pending (production embedding provider, production-scale vector
+    backend decision, and Japanese retrieval quality evaluation remain outstanding).
 
 ## Last known good implementation
 
-- Implementation commit: `cf28b4629c51245ff0ec880b58da97951f465b12`
-- Commit title: `brain-twin-2: Sprint 4C final hardening`
-- Local test count at that commit: **306 passed**
-- GitHub Actions run: `32844409644`
+- Implementation commit: `d8e46d5779e118dc93f9dbf835a0968ba5182edc`
+- Commit title: `brain-twin-2: Sprint 4D associative integration`
+- Local test count at that commit: **310 passed**
+- GitHub Actions run: `32878425146`
 - GitHub Actions result: **success** (headSha confirmed to match the pushed commit)
-- This round's Sprint 4D associative-integration work (see `WORKLOG.md`) builds on top of
-  this reviewed-pending baseline; see `WORKLOG.md` for the Sprint 4D commit once pushed.
+- This round's Sprint 4D final validation work (CLI hardening, Windows/Linux-substitute
+  benchmark, failure/recovery/migration/corruption validation; see `WORKLOG.md`) builds on
+  top of this reviewed-pending baseline; see `WORKLOG.md` for this round's commit once pushed.
 
 ## Completed review fixes — verify before Vector Search
 
@@ -99,23 +101,44 @@ HybridResult` alike. `retrieve()` now just calls `search.search()` then delegate
 --related` / `--hybrid --related` through the same function, so relation display is
 identical to the plain-`--related` path.
 
-**Not done this round** (explicitly out of reach in this session's Linux remote execution
-environment, not the actual Windows dev machine): the 10k-scale Windows benchmark, and
-failure/recovery/migration validation, both still listed under Sprint 4D in
-`docs/VECTOR_SEARCH_DESIGN.md`. Design-value tuning and the Vector Search completion review
-submission depend on those and have not started either.
+### 6. Sprint 4D: CLI hardening for negative `--related-limit`
+
+`search --vector/--hybrid --related --related-limit -1` used to run Primary search (and, for
+`--vector`/`--hybrid`, embedding config/provider setup and the vector/hybrid query itself)
+before the `related_limit` validation raised — printing Primary results to stdout for a
+command that was ultimately an error, and doing unnecessary provider/vector work. `_cmd_search`
+now validates `args.related and args.related_limit < 0` before any of that starts, for the
+plain/`--vector`/`--hybrid` paths alike: a clear `[NG]` error, non-zero exit, no provider call,
+no vector/hybrid search call, nothing printed to stdout.
+
+### 7. Sprint 4D: Windows benchmark (Linux-substitute) and failure/recovery/migration/corruption validation
+
+`scripts/vector_benchmark.py` measures `ExactScanBackend` + a synthetic offline deterministic
+provider at 1k and 10k Memories, dimension 384 and 768 — explicitly labeled as an
+`ExactScanBackend` reference/fallback benchmark, never "production Vector Search performance"
+(no production provider or `SqliteVecBackend` exists). Run in this session's Linux remote
+execution environment as an explicit substitute for the requested Windows machine; a Windows
+re-run is still needed. Full methodology/results/interpretation in
+`docs/VECTOR_WINDOWS_BENCHMARK.md`.
+
+Failure/recovery/migration/corruption scenarios (provider partial-failure resume, profile
+switch failure keeping the old active profile, backend index loss recovering via
+`rebuild_backend()`, a stale Memory being excluded from Vector-only but still reachable via
+Hybrid's lexical channel until resync, inactive/delete exclusion, a full SQLite-file deletion
+followed by `reindex` + embedding resync, a combined legacy-schema self-heal fixture, and
+malformed/corrupted-cache rejection) were validated against real DB fixtures — new end-to-end
+tests plus citations of pre-existing focused unit tests. Full results in
+`docs/VECTOR_RECOVERY_VALIDATION.md`.
 
 ## Next authorized task
 
-**Sprint 4D associative integration implemented; external review pending.** The remaining
-Sprint 4D items (10k-scale Windows benchmark, failure/recovery/migration validation, design
-value tuning, Vector Search completion review submission) still need a real Windows dev
-machine and have not been attempted.
+**Sprint 4D: all planned validation implemented; external review pending.**
 
-Do **not** begin Sprint 4E-equivalent scope (or anything beyond finishing Sprint 4D) until
-this implementation is reviewed and explicitly approved. Production embedding providers,
-`SqliteVecBackend`, `ask`, Contradiction Detection, Memory Consolidation, and smartphone
-integration remain out of scope.
+Do **not** begin Sprint 4E-equivalent scope, a production embedding provider,
+`SqliteVecBackend`, `ask`, Contradiction Detection, Memory Consolidation, or smartphone
+integration until this implementation is reviewed and explicitly approved. A Windows-machine
+re-run of the benchmark (this round's was an explicit Linux substitute) and, if the reviewer
+wants it, a 100k-scale data point remain open follow-ups but are not blockers to review.
 
 ## Core invariants
 

@@ -110,6 +110,13 @@ def _print_related(related: list[retrieval.RelatedMemory], *, verbose: bool) -> 
 def _cmd_search(args: argparse.Namespace) -> int:
     config = load_config()
 
+    # Sprint 4D CLI hardening: validate --related-limit before starting any embedding
+    # config/provider/search work (plain, --vector, and --hybrid alike), so a negative
+    # --related-limit fails fast with nothing printed and no provider/vector search call.
+    if args.related and args.related_limit < 0:
+        print("[NG] --related-limit must be non-negative", file=sys.stderr)
+        return 1
+
     if args.vector or args.hybrid:
         try:
             settings, backend, provider = _embedding_components(require_provider=True)

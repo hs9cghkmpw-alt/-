@@ -1,8 +1,16 @@
 # Vector Search Design（設計レビュー用）
 
 Status: **Sprint 4A complete. Sprint 4B complete. Sprint 4C implemented; external review
-pending. Sprint 4D associative integration implemented; Windows benchmark and
-failure/recovery/migration validation not yet done; external review pending**
+pending. Sprint 4D: all planned validation implemented (associative integration, benchmark,
+failure/recovery/migration/corruption validation, CLI hardening); external review pending.
+Benchmark ran on this session's Linux environment as an explicit substitute for the requested
+Windows machine — see `docs/VECTOR_WINDOWS_BENCHMARK.md`.**
+
+Phase 4 Vector Retrieval Core: validated / complete pending external review.
+Production activation: pending. Known remaining production dependencies: a production
+embedding provider, a production-scale vector backend decision (e.g. `SqliteVecBackend`), and
+Japanese retrieval quality evaluation — none of these three exist in this project yet, and
+none of the validation below substitutes for them.
 
 Scope: Vector Searchの設計のみ。実装、`ask`、LLM回答生成、Contradiction Detection、
 Memory Consolidationは含まない。
@@ -540,7 +548,13 @@ final hardeningとして実施(2026-08-25)。外部レビュー待ち。
 2. 初期production embedding providerと日本語評価dataset/query。
 3. 初期modelのdimension、license、immutable revision/profile_epoch運用、download容量。
 4. sqlite-vecを必須dependencyにするかoptional extraにするか。
-5. ExactScanBackendを何件まで許可するか。
+5. ExactScanBackendを何件まで許可するか。**Sprint 4D final validationで観測値を記録**
+   (`docs/VECTOR_WINDOWS_BENCHMARK.md`): 1件のreference run(Linux代替実行、Windows実機では
+   ない)では1k Memoriesで~58-60ms、10k/dim384で~0.6s、10k/dim768で~1.15s(vector/hybrid
+   query、warm median)。ExactScanは線形scanのため`count × dimension`にほぼ比例して悪化する。
+   1台のbenchmarkのみを根拠にcode上のhard-coded件数thresholdはまだ実装していない
+   (別レビュー対応)。観測に基づく推奨運用域は同docの「Recommended ExactScanBackend
+   operating range」を参照。
 6. lexical/vector初期weightとRRF candidate overfetch値。
 7. `reindex --embeddings`と独立`embeddings rebuild`のCLI表面を両方持つか。
 8. model profileを複数世代保持する期間とdisk cleanup policy。

@@ -1,7 +1,7 @@
 """Sprint 4C: `search --vector` / `search --hybrid` CLI wiring tests."""
 from pathlib import Path
 
-from brain_twin import cli, db, embedding_runtime
+from brain_twin import cli, db, embedding_runtime, hybrid_search, vector_search
 from brain_twin.embedding_config import load_embedding_settings
 from brain_twin.embedding_service import EmbeddingService
 from tests.fake_embedding_provider import FakeEmbeddingProvider
@@ -139,13 +139,59 @@ def test_search_vector_with_related_and_no_links_omits_related_section(config, t
     assert "関連Memory:" not in out
 
 
-def test_search_vector_with_negative_related_limit_is_a_clear_error(config, tmp_path, monkeypatch, capsys):
+def test_search_plain_with_negative_related_limit_is_a_clear_error_and_prints_nothing(
+    config, tmp_path, monkeypatch, capsys
+):
     _ready(config, tmp_path, monkeypatch)
+    assert cli.main(
+        ["search", "unique cli search phrase", "--related", "--related-limit", "-1"]
+    ) == 1
+    captured = capsys.readouterr()
+    out, err = captured.out, captured.err
+    assert "[NG]" in err
+    assert out == "" and "id=mem_1" not in out
+
+
+def test_search_vector_with_negative_related_limit_does_not_call_provider_or_vector_search(
+    config, tmp_path, monkeypatch, capsys
+):
+    _ready(config, tmp_path, monkeypatch)
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("should not be called for a negative --related-limit")
+
+    monkeypatch.setattr(embedding_runtime, "create_provider", _fail)
+    monkeypatch.setattr(vector_search, "vector_search", _fail)
+    monkeypatch.setattr(hybrid_search, "hybrid_search", _fail)
+
     assert cli.main(
         ["search", "unique cli search phrase", "--vector", "--related", "--related-limit", "-1"]
     ) == 1
-    err = capsys.readouterr().err
+    captured = capsys.readouterr()
+    out, err = captured.out, captured.err
     assert "[NG]" in err
+    assert out == "" and "id=mem_1" not in out
+
+
+def test_search_hybrid_with_negative_related_limit_does_not_call_provider_or_hybrid_search(
+    config, tmp_path, monkeypatch, capsys
+):
+    _ready(config, tmp_path, monkeypatch)
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("should not be called for a negative --related-limit")
+
+    monkeypatch.setattr(embedding_runtime, "create_provider", _fail)
+    monkeypatch.setattr(vector_search, "vector_search", _fail)
+    monkeypatch.setattr(hybrid_search, "hybrid_search", _fail)
+
+    assert cli.main(
+        ["search", "unique cli search phrase", "--hybrid", "--related", "--related-limit", "-1"]
+    ) == 1
+    captured = capsys.readouterr()
+    out, err = captured.out, captured.err
+    assert "[NG]" in err
+    assert out == "" and "id=mem_1" not in out
 
 
 def test_search_vector_cli_capability_unavailable_is_a_clear_error(config, tmp_path, monkeypatch, capsys):
