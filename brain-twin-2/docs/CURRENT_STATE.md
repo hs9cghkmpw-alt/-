@@ -33,10 +33,11 @@ Last updated: 2026-08-27
 
 ## Last known good implementation
 
-- Implementation commit: this closeout commit (exact SHA and Actions run recorded after push)
+- Implementation commit: `68ac6e420332bf87feecb47eb32b67cd84bd4016`
 - Commit title: `brain-twin-2: close Sprint 4D after Windows benchmark`
 - Local Windows tests: **321 passed, 1 skipped** (expected POSIX-only `resource` skip)
-- GitHub Actions: pending exact-SHA verification for this closeout commit
+- GitHub Actions run: `33033340980`
+- GitHub Actions result: **success** (`headSha` exactly matched the implementation commit)
 - External review: Sprint 4D **GO / COMPLETE**; Phase 4 Vector Retrieval Core
   **GO / COMPLETE**.
 

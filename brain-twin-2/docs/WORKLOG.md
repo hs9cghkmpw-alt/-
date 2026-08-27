@@ -224,7 +224,7 @@ Rules:
 - Recommendation: retain `ExactScanBackend` as reference implementation / fallback / small-Vault backend. Do not hard-code an unmeasured intermediate threshold; production scale needs a separately selected and validated ANN/vector-index backend.
 - Status: external review **GO**; Sprint 4D **COMPLETE**; Phase 4 Vector Retrieval Core **COMPLETE**. Production Vector Search activation remains **PENDING**.
 - Tests: Windows `321 passed, 1 skipped`; skip is expected because the POSIX-only `resource` module is unavailable on Windows. Smoke benchmark **PASS**.
-- CI: pending exact-SHA verification after push.
-- Commit: this closeout commit.
+- CI: GitHub Actions run `33033340980` **success**; `headSha` exactly matched `68ac6e420332bf87feecb47eb32b67cd84bd4016`.
+- Commit: `68ac6e420332bf87feecb47eb32b67cd84bd4016` (closeout implementation/docs); followed by a handoff metadata commit recording this exact-SHA CI result.
 - Known issues: production embedding provider and production-scale vector backend are not implemented/selected; Japanese semantic retrieval quality evaluation is not complete. Raw `.benchmark-results/` JSON remains an uncommitted generated artifact.
 - Next: stop at closeout. Production activation or Phase 5 requires separate explicit authorization.
