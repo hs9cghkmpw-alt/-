@@ -18,8 +18,8 @@ Production activation must pass two independent gates:
 The provisional pair is:
 
 - **Embedding:** direct `sentence-transformers` provider with pinned
-  `Qwen/Qwen3-Embedding-0.6B`, a frozen Japanese retrieval instruction, normalized output, and
-  initially 1024 dimensions.
+  `Qwen/Qwen3-Embedding-0.6B`, an instruction selected and frozen only after PA1 comparison,
+  normalized output, and initially 1024 dimensions.
 - **Backend:** `faiss-cpu` HNSW, persisted as a disposable generation-stamped sidecar and rebuilt
   only from valid canonical SQLite embedding BLOBs.
 
@@ -62,7 +62,7 @@ during this design task.
 
 | Candidate | Japanese / mixed outlook | Short query / long Memory | Size / output / context | Windows, offline, license, revision | Decision |
 |---|---|---|---|---|---|
-| **Qwen3-Embedding-0.6B** | 100+ language candidate; Japanese gold test required | Custom retrieval instruction; 32k context | 0.6B; up to 1024, selectable dimensions; 32k | Direct ST/Transformers, local after prefetch; Apache-2.0; pin HF commit and runtime | **Provisional primary.** Best recent quality/context/size balance; CPU speed is the main risk |
+| **Qwen3-Embedding-0.6B** | 100+ language candidate; Japanese gold test required | Task-specific instruction is configurable; official guidance generally recommends English instructions for multilingual use because training instructions were primarily English; 32k context | 0.6B; up to 1024, selectable dimensions; 32k | Direct ST/Transformers, local after prefetch; Apache-2.0; pin HF commit and runtime | **Provisional primary.** PA1 compares task-specific English, equivalent Japanese, and no instruction before freezing; CPU speed is the other main risk |
 | **BAAI/bge-m3** | Mature 100+ language candidate with Japanese benchmark coverage | Dense mode needs no query instruction; 8192 tokens | 568M; 1024; 8192 | ST/FlagEmbedding local path; MIT; pin commit/adapter | **Quality and long-text challenger.** Higher vector/CPU cost; sparse/ColBERT output is out of scope |
 | **multilingual-e5-large-instruct** | Established 94-language Japanese baseline | Explicit query instruction; 512-token long-Memory risk | ~560M; 1024; 512 | Standard local ST path; MIT; pin commit | **Quality baseline**, not primary due context/CPU cost |
 | **multilingual-e5-base** | Established lower-cost multilingual baseline | Query/document prefix contract; 512 tokens | ~278M; 768; 512 | Standard local ST path; MIT; pin commit | **Required efficiency baseline** |
@@ -97,13 +97,24 @@ BGE-M3 must emit one dense vector only. E5/Nomic asymmetric prefixes and Qwen in
 profile behavior. Long-input truncation is explicit; future chunking is a new document-template
 contract, not part of this activation.
 
+For Qwen, PA1 must evaluate at least three otherwise-identical query profiles:
+
+1. Brain Twin task-specific **English** instruction;
+2. an equivalent task-specific **Japanese** instruction;
+3. **no instruction**.
+
+The model's shipped/default query prompt may be a fourth baseline, but its web-search-oriented
+wording is not assumed optimal for personal Memory retrieval. The gold evaluation selects the
+instruction language and exact text; the design does not preselect Japanese. Document encoding,
+normalization, dimension, and all other settings must remain fixed across this comparison.
+
 ## Vector backend comparison
 
 | Backend | Windows / Python 3.12 / install | Scale and ANN | Filter / update-delete | Recovery / canonical-BLOB fit | Decision |
 |---|---|---|---|---|---|
-| **FAISS CPU 1.15.0** | Official Windows x86-64 CPython 3.12 PyPI wheel (~16 MB); MIT | Mature exact/HNSW/IVF; credible 100k+ path | Integer IDs; semantics vary by index, so HNSW adapter needs tombstones + rebuild | Save disposable sidecar; build by streaming valid BLOBs; SQLite owns metadata | **Provisional primary spike.** Strongest current ANN maturity + official wheel; adapter lifecycle must be proven |
+| **FAISS CPU** | A community-maintained PyPI distribution currently has a Windows x86-64 CPython 3.12 wheel; upstream supports binary installation through conda or Pixi on Windows x86-64; MIT | Mature exact/HNSW/IVF; credible 100k+ path | HNSW cannot remove vectors. Physical ANN identity must not ambiguously reuse logical `memory_id`; PA3 must prove versioned entries or rebuild-on-update | Save disposable sidecar; build by streaming valid BLOBs; SQLite owns metadata | **Provisional primary spike.** Strong ANN maturity, but packaging source and identity/update lifecycle must pass PA3 |
 | **LanceDB OSS 0.37.1** | Apache-2.0; official cp310-abi3 Windows wheel (~71 MB); PyPI labels Alpha | HNSW/IVF-PQ plus exact bypass; credible 100k | Native filters/update/delete and stable-row-ID option | Embedded durable dataset/index, rebuildable but duplicates storage/lifecycle | **Challenger** if FAISS adapter risk is excessive |
-| **sqlite-vec 0.1.9** | MIT/Apache-2.0; Windows `py3-none` wheel; prior Windows load/CRUD/KNN spike passed | Fast exact `vec0`; official project is pre-v1; do not assume ANN/100k interactive | Metadata/aux/partition; tested update is delete+insert | Excellent same-SQLite rebuild fit | **Exact/mid-scale candidate, not current ANN primary** |
+| **sqlite-vec** | Stable 0.1.9 is pre-v1, has a Windows `py3-none` wheel, and passed the prior Windows load/CRUD/KNN spike; MIT/Apache-2.0 | Stable 0.1.9 exact `vec0` remains relevant. 0.1.10-alpha pre-releases contain experimental ANN work including DiskANN, rescore, and experimental IVF, but are not production-mature | Stable tested update is delete+insert; alpha ANN deletion/lifecycle semantics remain experimental | Excellent same-SQLite rebuild fit | **Stable 0.1.9 exact/mid-scale candidate; not selected as 100k ANN primary.** Alpha ANN maturity/stability is insufficient for the current default |
 | **hnswlib 0.8.0** | Apache-2.0; official PyPI latest (2023) is source-only | Focused HNSW, good 10k/100k algorithmic fit | Mark-delete/replacement/update; no metadata engine | Simple save/load sidecar, rebuildable | **Not selected:** unacceptable Windows compiler/release risk |
 | **Qdrant local/server** | Apache-2.0 Python 3.12 client; local mode exists; server adds binary/container/process | HNSW, payload indexes, WAL, 100k+ | First-class filters/CRUD | Rebuildable, but duplicate durable store; official docs warn about Windows Docker/WSL mounts | **Future service/mobile split**, not desktop default; local mode is documented for dev/prototyping/testing |
 | **USearch 2.26.0** | Apache-2.0; small official Windows CPython 3.12 wheel | Fast ANN and sidecar persistence | Python binding lacks native filter predicates; lifecycle needs spike | Strong rebuildable-sidecar fit | **Secondary fallback spike**, lower priority than FAISS |
@@ -133,10 +144,23 @@ EmbeddingService
  top IDs → SQLite active/valid filter → Hybrid RRF → existing 1-hop expansion
 ```
 
-FAISS initially stores only ID/vector plus a manifest. SQLite owns active/profile validity.
-Search uses bounded ANN overfetch, filters candidate IDs in SQLite, and increases overfetch to a
-fixed cap. It returns fewer than K rather than leak stale/inactive rows. Future complex ACL/filter
-requirements should trigger LanceDB/Qdrant reconsideration, not an ad-hoc duplicate metadata DB.
+FAISS initially stores only physical ANN entry identity/vector plus a manifest. SQLite owns
+logical `memory_id`, active/profile/content validity, and the authoritative mapping. HNSW does not
+support removing vectors, so physical `ann_entry_id` must be separable from logical `memory_id`.
+PA3 must choose and prove one of two designs:
+
+- versioned physical identity: each `ann_entry_id` maps to `memory_id`, profile fingerprint,
+  content hash, and embedding generation; replaced entries remain physically present but are
+  tombstoned/rejected against canonical SQLite state; or
+- no incremental replacement: any content update enters a bounded, reviewed rebuild strategy
+  before the new embedding becomes ANN-searchable.
+
+Reusing one HNSW physical ID ambiguously for multiple embedding generations is forbidden. Search
+uses bounded ANN overfetch, resolves physical entries through SQLite, rejects non-current and
+inactive entries, deduplicates by logical `memory_id`, and increases overfetch to a fixed cap. If
+valid unique results are exhausted, it returns fewer than K rather than old, inactive, duplicate,
+or otherwise invalid results. Future complex ACL/filter requirements should trigger LanceDB/Qdrant
+reconsideration, not an ad-hoc duplicate metadata DB.
 
 HNSW `M`, construction/search `ef`, threads, and candidate overfetch are not guessed here; PA3
 tunes them against Recall@K, latency, memory, and disk. Backend/build parameters belong to
@@ -164,11 +188,14 @@ backend state/manifest, not `EmbeddingProfile`.
 6. Atomically activate only after both stages pass; retain the prior ready generation for bounded
    rollback and explicit cleanup.
 
-Canonical cache remains write-first under existing invalidation transactions. Treat HNSW deletion
-conservatively: logical tombstones + bounded overfetch, with periodic full rebuild at a measured
-ratio. Update is tombstone-old + add-new. Sidecar writes use a same-filesystem temporary file and
-atomic replace. Manifest includes backend/version/build parameters/profile fingerprint/dimension/
-count/canonical snapshot marker and checksum where practical.
+Canonical cache remains write-first under existing invalidation transactions. Because HNSW cannot
+remove vectors, update behavior is intentionally left to the two PA3 alternatives above. If PA3
+selects versioned physical entries, old generations are tombstoned and only a new, unique
+`ann_entry_id` may be added; the same physical ID cannot be reused. If PA3 selects rebuild-on-update,
+no incremental replacement is attempted. Either design requires a measured bounded rebuild policy.
+Sidecar writes use a same-filesystem temporary file and atomic replace. Manifest includes backend/
+version/build parameters/profile fingerprint/dimension/count/canonical snapshot marker and checksum
+where practical.
 
 Missing/malformed manifest, load failure, count/profile/dimension mismatch, or impossible ID makes
 the backend unavailable. Backend rebuild streams BLOBs fully offline and never rewrites Markdown.
@@ -179,7 +206,10 @@ provider-free ANN build; normal `reindex` itself remains provider-free.
 
 - Record/pin Windows architecture, Python, NumPy, Torch, Transformers, Sentence-Transformers,
   tokenizer, model commit, FAISS, and CPU feature set.
-- Prove a clean Python 3.12 wheel-only install. Optional native dependencies are lazy imports.
+- PA3 compares the community-maintained PyPI wheel path with upstream-supported conda/Pixi binary
+  installation on clean Windows/Python 3.12. Both paths must avoid a compiler and be assessed for
+  reproducibility, package hash/version pinning, update cadence, supply-chain/maintenance risk, and
+  final application distribution complexity. Optional native dependencies remain lazy imports.
 - Model acquisition is explicit and shows size/license/checksum/destination; runtime uses
   local-files-only mode.
 - Never use mutable model/Ollama `latest`; record digest, quantization, Ollama version, dimension,
@@ -240,7 +270,7 @@ after model selection so model and ranker changes are not confounded.
 | Qwen 0.6B is too slow | E5-base, Nomic 256/768, and GTE challengers; predeclare CPU/RAM gate |
 | Long Memory truncates silently | Token-length buckets/logging; BGE/GTE challenger; chunking is later versioned contract |
 | Native wheel regression | Hash/version pin, clean Windows install, optional dependency isolation |
-| HNSW tombstone growth | Measured rebuild threshold and bounded overfetch |
+| HNSW cannot remove/update in place | Versioned physical IDs with canonical rejection, or reviewed rebuild-on-update; never reuse an ambiguous physical ID |
 | ANN diverges/corrupts | Manifest/generation checks, atomic replace, provider-free rebuild |
 | Backend becomes accidental SOT | Only canonical SQLite BLOB is valid build input; never reverse-import |
 | `trust_remote_code` supply chain | Prefer plain model; otherwise immutable commit and code audit |
@@ -255,7 +285,8 @@ Unresolved before formal ADR acceptance:
 1. Minimum Windows CPU/RAM and numeric cold/warm latency budget.
 2. Exact Qwen instruction and 1024 versus smaller output dimension.
 3. Long-Memory truncation acceptance versus a later chunking design.
-4. FAISS ID map, tombstone threshold, thread policy, sidecar/manifest format.
+4. FAISS versioned-entry versus rebuild-on-update choice, physical/logical ID map, tombstone or
+   rebuild threshold, thread policy, and sidecar/manifest format.
 5. Numeric 100k rebuild/RSS/index-size gates.
 6. One default model versus quality/lightweight profiles.
 7. Redistribution versus user download and license-notice UX.
@@ -269,6 +300,9 @@ No Sprint below is authorized by this draft.
 
 Add privacy-safe gold fixtures/schema, experiment manifest, lexical/vector/hybrid runner, metrics,
 latency/RSS, and ExactScan oracle. Evaluate Qwen, BGE-M3, E5 base/large, Nomic, GTE, and MiniLM.
+For Qwen, compare task-specific English instruction, equivalent Japanese instruction, and no
+instruction with all other profile variables fixed; optionally include the shipped/default query
+prompt as a separate baseline without assuming it fits Brain Twin.
 Gate: external review chooses an exact profile or stops activation.
 
 ### PA2 — Production embedding provider
@@ -280,9 +314,12 @@ implicit network. Ollama is separate optional scope. Gate: clean Windows install
 ### PA3 — Production ANN backend
 
 Spike FAISS HNSW, LanceDB, and optionally USearch against identical precomputed BLOBs at
-1k/10k/100k and the selected dimension. Measure exact recall, CRUD/tombstones, filtering, rebuild,
-atomic replace, corruption, RSS/disk, latency, and wheel install. Implement one backend only after
-the spike decision.
+1k/10k/100k and the selected dimension. For FAISS, compare the community PyPI wheel and upstream
+conda/Pixi paths against the Windows/Python/distribution gate; choose/prove versioned physical
+`ann_entry_id` mapping or bounded rebuild-on-update. Acceptance must prove old/inactive embeddings
+cannot leak, old/new physical entries cannot duplicate a logical Memory, and overfetch exhaustion
+returns fewer than K. Measure exact recall, filtering, rebuild, atomic replace, corruption,
+RSS/disk, latency, and packaging. Implement one backend only after the spike decision.
 
 ### PA4 — Integration/recovery/production benchmark
 
@@ -297,6 +334,7 @@ parameters require PA1’s dimension. PA4 depends on PA2 and PA3.
 ## Official sources consulted
 
 - [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)
+- [Qwen3-Embedding-0.6B GGUF guidance](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF)
 - [BGE-M3](https://huggingface.co/BAAI/bge-m3)
 - [multilingual-e5-large-instruct](https://huggingface.co/intfloat/multilingual-e5-large-instruct)
 - [Nomic Embed v2 MoE](https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe)
@@ -305,8 +343,10 @@ parameters require PA1’s dimension. PA4 depends on PA2 and PA3.
 - [Ollama embeddings](https://docs.ollama.com/capabilities/embeddings)
 - [FAISS install](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) and
   [PyPI files](https://pypi.org/project/faiss-cpu/)
+- [FAISS index guidance: HNSW does not support removal](https://github.com/facebookresearch/faiss/wiki/Faiss-indexes#indexhnsw-variants)
 - [sqlite-vec repository](https://github.com/asg017/sqlite-vec) and
   [PyPI files](https://pypi.org/project/sqlite-vec/)
+- [sqlite-vec releases and 0.1.10-alpha notes](https://github.com/asg017/sqlite-vec/releases)
 - [hnswlib repository](https://github.com/nmslib/hnswlib) and
   [PyPI files](https://pypi.org/project/hnswlib/)
 - [LanceDB API](https://lancedb.github.io/lancedb/python/python/),

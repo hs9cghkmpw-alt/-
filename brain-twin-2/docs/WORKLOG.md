@@ -250,3 +250,21 @@ Rules:
   remain unmeasured on Windows. The ADR is Proposed, not Accepted.
 - Next: external review. If explicitly approved, begin PA1 Japanese retrieval evaluation harness;
   do not implement the provider/backend or start Phase 5 from this draft alone.
+
+## 2026-08-27 — Codex — Production Vector Search external-review fixes
+
+- Branch: `brain-twin-dev`
+- Base: `fee05da105785135564eccce8bd1061a90403d45`
+- Scope: docs/design-only fixes requested by external review; no PA1–PA4 implementation, package
+  installation, model download, schema, or production-config change.
+- Changed: made Qwen instruction language an explicit PA1 English/Japanese/no-instruction
+  comparison; required unambiguous physical ANN identity or rebuild-on-update for non-removable
+  FAISS HNSW entries and leakage/dedup/exhaustion gates; corrected FAISS PyPI wheel provenance and
+  added PyPI-versus-upstream-conda/Pixi packaging gate; recorded stable sqlite-vec 0.1.9 exact
+  status and experimental 0.1.10-alpha DiskANN/rescore/IVF work without promoting it.
+- Tests: documentation-only; no local test suite planned. `git diff --check` required.
+- CI: pending exact-SHA verification after push.
+- Commit: this commit.
+- Known issues: exact Qwen instruction/dimension, FAISS packaging path and physical-ID/update
+  strategy, ANN parameters, and numeric Windows budgets remain PA1/PA3 evaluation decisions.
+- Next: external review. Production activation remains PENDING; do not begin PA1 without explicit GO.

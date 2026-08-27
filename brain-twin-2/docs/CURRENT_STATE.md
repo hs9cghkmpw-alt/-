@@ -35,6 +35,9 @@ Last updated: 2026-08-27
     1k/10k/100k ANN spike gates.
   - Design: `docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md`; ADR draft:
     `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`.
+  - External-review fix round completed for instruction comparison, FAISS HNSW physical identity /
+    update semantics, FAISS packaging provenance, and sqlite-vec alpha ANN status; review remains
+    pending and no PA Sprint is authorized.
   Phase 4 core completion does not mean the Vector Search product feature is production-ready.
 
 ## Last known good implementation
