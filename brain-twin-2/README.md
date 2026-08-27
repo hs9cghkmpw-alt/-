@@ -680,6 +680,10 @@ Phase 4 Vector Retrieval Coreも **GO / COMPLETE**。ただしProduction Vector 
 production embedding provider、production-scale backend、日本語semantic retrieval品質評価が
 未完了のため **PENDING** であり、製品機能のproduction-ready宣言ではない。
 
+2026-08-27の技術選定案は`docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md`、提案ADRは
+`docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`を参照。どちらも**external review pending**の
+draftであり、provider/backend実装やproduction activationを許可・確定するものではない。
+
 - **Associative Retrieval統合**: **reviewed GO**。`retrieval.py`の1-hop展開ロジックを
   `retrieve_from_primary()`として抽出し、primary結果の型に依存しない(`memory_id`属性
   さえあればよい)Protocol/Genericにした。既存の`retrieve()`(plain lexical検索用)は
@@ -721,6 +725,6 @@ Phase 1〜3(Memory Foundation、Automatic Memory Worker、Retrieval)は完了し
 Vector Retrieval Core(Phase 4 / Sprint 4A〜4D)は **GO / COMPLETE**。`ExactScanBackend`は
 reference implementation / fallback / small-Vault backendとして維持し、production-scaleには
 将来のANN/vector-index backendが必要。Production Vector Search activationは **PENDING**。
-次に明示許可されるまでは、production embedding provider・
-`SqliteVecBackend`本番adapter・`ask`/LLM・Contradiction Detection・Memory Consolidation・
-smartphone統合には進まない。
+技術選定draftのexternal reviewが次の作業である。明示的なreview GOまではPA1〜PA4、
+production embedding provider/backend実装、`ask`/LLM、Contradiction Detection、Memory
+Consolidation、smartphone統合には進まない。

@@ -228,3 +228,25 @@ Rules:
 - Commit: `68ac6e420332bf87feecb47eb32b67cd84bd4016` (closeout implementation/docs); followed by a handoff metadata commit recording this exact-SHA CI result.
 - Known issues: production embedding provider and production-scale vector backend are not implemented/selected; Japanese semantic retrieval quality evaluation is not complete. Raw `.benchmark-results/` JSON remains an uncommitted generated artifact.
 - Next: stop at closeout. Production activation or Phase 5 requires separate explicit authorization.
+
+## 2026-08-27 — Codex — Production Vector Search technical selection
+
+- Branch: `brain-twin-dev`
+- Base: `19c99600807e1e941ab2a5b3e83d7bc3b9737337`
+- Scope: design-only comparison and provisional selection of a local production embedding
+  provider/model, production-scale ANN backend, Japanese retrieval evaluation plan, ADR draft,
+  and implementation Sprint proposal; no code, dependency, schema, or production-config change.
+- Changed: added `docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md` and
+  `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`; compared Qwen3 Embedding, BGE-M3, multilingual E5,
+  Nomic v2, GTE multilingual, MiniLM, and Ollama; compared FAISS, LanceDB, sqlite-vec, hnswlib,
+  Qdrant, USearch, and ExactScan. Proposed pinned Qwen3-Embedding-0.6B + FAISS HNSW subject to
+  Japanese gold evaluation and Windows 1k/10k/100k ANN gates. Synced README/CURRENT_STATE to
+  external-review-pending status.
+- Tests: documentation-only; no test suite run. `git diff --check` required before commit.
+- CI: pending exact-SHA verification after push.
+- Commit: this commit.
+- Known issues: model quality/CPU/RAM is unmeasured on the Brain Twin Japanese gold set; FAISS
+  HNSW parameters, delete/tombstone lifecycle, ANN recall, disk/RSS, and crash-safe replacement
+  remain unmeasured on Windows. The ADR is Proposed, not Accepted.
+- Next: external review. If explicitly approved, begin PA1 Japanese retrieval evaluation harness;
+  do not implement the provider/backend or start Phase 5 from this draft alone.

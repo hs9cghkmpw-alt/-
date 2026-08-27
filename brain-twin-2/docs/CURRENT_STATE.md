@@ -29,6 +29,12 @@ Last updated: 2026-08-27
   - production embedding provider is not implemented;
   - production-scale vector backend is not implemented/selected;
   - Japanese semantic retrieval quality evaluation has not been performed.
+  - Technical-selection draft completed on 2026-08-27; external review pending.
+  - Provisional pair: pinned `Qwen/Qwen3-Embedding-0.6B` direct Sentence Transformers
+    provider + rebuildable FAISS HNSW sidecar, subject to Japanese gold evaluation and Windows
+    1k/10k/100k ANN spike gates.
+  - Design: `docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md`; ADR draft:
+    `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`.
   Phase 4 core completion does not mean the Vector Search product feature is production-ready.
 
 ## Last known good implementation
@@ -171,14 +177,10 @@ ANN/vector-index backend, and Japanese semantic retrieval quality evaluation.
 
 ## Next authorized task
 
-Sprint 4D and Phase 4 Vector Retrieval Core are **GO / COMPLETE**. Stop at closeout; no Phase
-5 or production activation work is authorized by this task.
-
-The next production work requires separate authorization and includes selecting/implementing
-a production embedding provider, selecting/implementing a production-scale ANN/vector-index
-backend, and evaluating Japanese semantic retrieval quality. Do **not** begin `ask`,
-Contradiction Detection, Memory Consolidation, smartphone integration, or Phase 5 without an
-explicit instruction.
+Sprint 4D and Phase 4 Vector Retrieval Core are **GO / COMPLETE**. Production Vector Search
+technical selection is drafted; **external review is the next authorized action**. Do not begin
+PA1–PA4 implementation until the draft receives explicit review/GO. Do **not** begin `ask`,
+Contradiction Detection, Memory Consolidation, smartphone integration, or Phase 5.
 
 ## Core invariants
 
