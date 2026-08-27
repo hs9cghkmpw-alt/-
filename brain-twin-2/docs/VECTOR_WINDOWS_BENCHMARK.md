@@ -2,9 +2,8 @@
 
 Status: **measured on a Linux remote execution environment, NOT the Windows dev machine
 requested by the task. Explicitly a substitute reference run** (see "Environment"
-below). A Windows-machine re-run is still required before this can be cited as the
-official Sprint 4D Windows benchmark; see "Windows official run" at the end of this document
-(pending).
+below). The later official Windows-machine run is recorded separately in "Windows official
+run" at the end of this document; Linux and Windows values are not merged.
 
 ## Sprint 4D benchmark final hardening (this round)
 
@@ -311,18 +310,95 @@ this order of magnitude):
 
 ## Windows official run
 
-**Pending.** This session has no Windows machine; if this document's fixes were applied by a
-session running on the actual Windows development machine, its official run belongs in this
-section (environment table + phase/query tables in the same format as the corrected Linux
-run above), and this "pending" line should be replaced accordingly. Do not fill in Windows
-numbers by estimation, extrapolation, or reuse of the Linux figures above — only a real run on
-Windows hardware belongs here. Until this section has real data, Sprint 4D's Windows
-benchmark requirement remains unmet.
+Run on the official Windows development machine with the corrected Sprint 4D harness,
+`--seed 42`, and `--warm-repeats 20`. The backend was `ExactScanBackend`; the provider was
+the offline deterministic synthetic provider. These are reference/fallback measurements,
+not production Vector Search performance.
+
+### Environment
+
+| Field | Value |
+|---|---|
+| System | Windows |
+| OS | `Windows-11-10.0.22621-SP0` |
+| Architecture | `AMD64` |
+| Python | `3.12.10` |
+| SQLite | `3.49.1` |
+| Logical CPUs | 4 |
+| Peak RSS | unavailable on Windows without an optional dependency |
+| Baseline tests | `321 passed, 1 skipped` |
+| Test skip | expected platform-specific skip: POSIX-only `resource` module unavailable on Windows |
+| Smoke benchmark | **PASS** |
+
+### 1,000 Memories / dimension 384
+
+| Phase | Value |
+|---|---|
+| A. dataset preparation | 0.421919499989599 s |
+| B. embedding cache population | 0.7936596998479217 s |
+| C. first backend build | 0.08840510016307235 s |
+| backend-only rebuild | 0.12497260002419353 s |
+| I. DB file size | 3,866,624 bytes |
+
+| Query | cold | warm median | warm p95 | warm min | warm max |
+|---|---|---|---|---|---|
+| D. lexical | 0.011020899983122945 s | 0.003911799984052777 s | 0.004707199987024069 s | 0.0029038998764008284 s | 0.0054696002043783665 s |
+| E. vector (ExactScan) | 0.16775499982759356 s | 0.16607895004563034 s | 0.17548710014671087 s | 0.15839809994213283 s | 0.17741520004346967 s |
+| F. hybrid | 0.1948622001800686 s | 0.18639289995189756 s | 0.22536590020172298 s | 0.1646977998316288 s | 0.2510121001396328 s |
+| G. related expansion only | 0.012586500030010939 s | 0.010914199869148433 s | 0.012453700182959437 s | 0.009860299993306398 s | 0.01461190008558333 s |
+| H. hybrid + related (end-to-end) | 0.2115560001693666 s | 0.19311684998683631 s | 0.21842229994945228 s | 0.1667770000640303 s | 0.21919659990817308 s |
+
+### 10,000 Memories / dimension 384
+
+| Phase | Value |
+|---|---|
+| A. dataset preparation | 3.6058022999204695 s |
+| B. embedding cache population | 16.923092999961227 s |
+| C. first backend build | 0.9948418000712991 s |
+| backend-only rebuild | 1.6834617001004517 s |
+| I. DB file size | 37,294,080 bytes |
+
+| Query | cold | warm median | warm p95 | warm min | warm max |
+|---|---|---|---|---|---|
+| D. lexical | 0.022632900159806013 s | 0.020383700029924512 s | 0.024825700093060732 s | 0.017816799925640225 s | 0.030592700000852346 s |
+| E. vector (ExactScan) | 1.9016056000255048 s | 1.6580697500612587 s | 2.252139500109479 s | 1.471224000211805 s | 2.626612199936062 s |
+| F. hybrid | 1.7501643998548388 s | 1.7955519499955699 s | 2.3295481000095606 s | 1.546307799872011 s | 2.5128216999582946 s |
+| G. related expansion only | 0.14134439988993108 s | 0.13576229999307543 s | 0.1451795999892056 s | 0.133138399804011 s | 0.16686800005845726 s |
+| H. hybrid + related (end-to-end) | 2.2505092001520097 s | 1.9867968000471592 s | 2.4997661001980305 s | 1.6990227000787854 s | 2.6089803997892886 s |
+
+### 10,000 Memories / dimension 768
+
+| Phase | Value |
+|---|---|
+| A. dataset preparation | 4.027724999934435 s |
+| B. embedding cache population | 18.703683900181204 s |
+| C. first backend build | 2.2306381999514997 s |
+| backend-only rebuild | 2.4091620000544935 s |
+| I. DB file size | 57,819,136 bytes |
+
+| Query | cold | warm median | warm p95 | warm min | warm max |
+|---|---|---|---|---|---|
+| D. lexical | 0.023074100026860833 s | 0.02189039997756481 s | 0.03412040020339191 s | 0.018397900043055415 s | 0.034598699770867825 s |
+| E. vector (ExactScan) | 3.39562730002217 s | 3.7755839999299496 s | 4.655491600045934 s | 3.237727699801326 s | 4.9858795998152345 s |
+| F. hybrid | 3.9439372001215816 s | 4.052969499956816 s | 7.031855500070378 s | 3.2377581999171525 s | 7.799177900189534 s |
+| G. related expansion only | 0.1933881000149995 s | 0.16055660007987171 s | 0.19816719996742904 s | 0.1293502999469638 s | 0.29915830004028976 s |
+| H. hybrid + related (end-to-end) | 4.726230600150302 s | 4.234832699992694 s | 7.488173099933192 s | 3.3273723998572677 s | 9.992988500045612 s |
+
+### Windows / Linux interpretation
+
+Windows ExactScan retrieval was roughly 2–3 times slower than the corrected Linux reference
+at the measured 10,000-Memory points. At about 1,000 Memories it remained comfortable and
+interactive (Hybrid + Related median 0.193 s). At 10,000/384 it remained correct but was
+noticeably slow (Hybrid + Related median 1.987 s). At 10,000/768 it was not suitable as the
+primary interactive backend (median 4.235 s, p95 7.488 s, max 9.993 s).
+
+Accordingly, retain `ExactScanBackend` as the reference implementation, fallback, and
+small-Vault backend. A few thousand Memories may remain usable, but that range was not
+directly benchmarked, so no hard-coded threshold is justified. Production-scale use requires
+an ANN/vector-index backend selected and validated separately.
 
 ## Known limitations
 
-- Windows benchmark is still pending (see "Windows official run" above) — the Linux runs in
-  this document are explicit substitutes, not the official Sprint 4D Windows benchmark.
 - Synthetic random vectors have no real semantic structure, so similarity-ranking *quality* is
   not evaluated here at all — this benchmark is about latency/throughput/size only.
 - No 100k-Memory data point (explicitly not required this round per the task).

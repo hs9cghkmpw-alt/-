@@ -214,3 +214,17 @@ Rules:
 - Commit: this commit.
 - Known issues: the Windows official ExactScan benchmark has still not been run anywhere — this is Sprint 4D's sole remaining blocker per external review, and it requires a session with an actual Windows machine. `docs/VECTOR_WINDOWS_BENCHMARK.md`'s "Windows official run" section remains an unfilled placeholder (correctly left that way). `SqliteVecBackend` production adapter and a real embedding provider are still not implemented.
 - Next: **Sprint 4D: implemented and validated; external review pending. Sprint 4D overall is not complete — the Windows official ExactScan benchmark is still pending.** A session running on the actual Windows development machine should run `scripts/vector_benchmark.py` (already portable) at 1k/384, 10k/384, and 10k/768 with `--warm-repeats 20`, and record environment + phase/query results in `docs/VECTOR_WINDOWS_BENCHMARK.md`'s "Windows official run" section, in its own table separate from the Linux figures. Do not begin Sprint 4E-equivalent scope, a production embedding provider, `SqliteVecBackend`, `ask`, Contradiction Detection, Memory Consolidation, or smartphone integration until Sprint 4D is complete and reviewed.
+
+## 2026-08-27 — Codex — Sprint 4D and Phase 4 closeout
+
+- Branch: `brain-twin-dev`
+- Base: `8d32acb7ff08aa222a4ddff71ad00a7ad5ca89b4`
+- Scope: record the completed Windows official ExactScan benchmark and close Sprint 4D / Phase 4 Vector Retrieval Core after external review GO; documentation/status only, with no feature implementation.
+- Changed: recorded the Windows 11 AMD64 / Python 3.12.10 / SQLite 3.49.1 environment and full 1k/384, 10k/384, and 10k/768 benchmark tables separately from Linux. Windows ExactScan retrieval was roughly 2–3x slower than the Linux reference at the measured 10k points. About 1k Memories remained interactive; 10k/384 was correct but noticeably slow (Hybrid + Related median ~1.99 s); 10k/768 was unsuitable as an interactive primary backend (median ~4.23 s, p95 ~7.49 s, max ~9.99 s).
+- Recommendation: retain `ExactScanBackend` as reference implementation / fallback / small-Vault backend. Do not hard-code an unmeasured intermediate threshold; production scale needs a separately selected and validated ANN/vector-index backend.
+- Status: external review **GO**; Sprint 4D **COMPLETE**; Phase 4 Vector Retrieval Core **COMPLETE**. Production Vector Search activation remains **PENDING**.
+- Tests: Windows `321 passed, 1 skipped`; skip is expected because the POSIX-only `resource` module is unavailable on Windows. Smoke benchmark **PASS**.
+- CI: pending exact-SHA verification after push.
+- Commit: this closeout commit.
+- Known issues: production embedding provider and production-scale vector backend are not implemented/selected; Japanese semantic retrieval quality evaluation is not complete. Raw `.benchmark-results/` JSON remains an uncommitted generated artifact.
+- Next: stop at closeout. Production activation or Phase 5 requires separate explicit authorization.

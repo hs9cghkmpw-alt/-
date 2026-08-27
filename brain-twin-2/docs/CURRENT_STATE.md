@@ -1,6 +1,6 @@
 # Brain Twin 2 — Current State
 
-Last updated: 2026-08-26
+Last updated: 2026-08-27
 
 ## Active development context
 
@@ -17,42 +17,28 @@ Last updated: 2026-08-26
   - Associative Retrieval (1-hop outgoing + incoming links): **implemented**
   - Timeline Search (`event_date` range filtering): **implemented**
   - Final hardening review: **complete**
-- Phase 4 — Vector Search:
-  - Sprint 4A contracts / canonical cache / ExactScan / Windows storage spike: **complete**
-  - Sprint 4B rebuildable embedding cache: **complete** (external review GO received)
-  - Sprint 4C vector + hybrid primary retrieval: architecture / Vector Search / Hybrid RRF /
-    lazy detail fetch / availability gate / CLI / handoff protocol reviewed and approved.
-    **Final hardening: reviewed GO / COMPLETE** (see below).
-  - Sprint 4D:
-    - associative integration: **reviewed GO**
-    - CLI hardening: **reviewed GO**
-    - failure/recovery/migration validation: **reviewed GO**
-    - benchmark harness final hardening (Windows portability, corrected end-to-end metric,
-      valid synthetic dates): **reviewed GO**
-    - Linux substitute ExactScan benchmark: **completed** (see
-      `docs/VECTOR_WINDOWS_BENCHMARK.md`; explicitly not the official Windows benchmark)
-    - Windows official ExactScan benchmark: **pending** (no Windows machine available in
-      this session's environment; this is Sprint 4D's sole remaining blocker per external
-      review)
-    - **Sprint 4D overall: not complete; Windows official benchmark pending.**
-    Production activation: pending (production embedding provider, production-scale vector
-    backend decision, and Japanese retrieval quality evaluation remain outstanding
-    regardless of the Windows benchmark's outcome).
+- Phase 4 — Vector Retrieval Core: **GO / COMPLETE**
+  - Sprint 4A: **COMPLETE**
+  - Sprint 4B: **COMPLETE**
+  - Sprint 4C: **COMPLETE**
+  - Sprint 4D: **GO / COMPLETE**
+  - Windows official ExactScan benchmark: **complete** on the Windows development machine
+    (Windows 11, AMD64, Python 3.12.10, SQLite 3.49.1; full results and Linux comparison in
+    `docs/VECTOR_WINDOWS_BENCHMARK.md`).
+- Production Vector Search activation: **PENDING**
+  - production embedding provider is not implemented;
+  - production-scale vector backend is not implemented/selected;
+  - Japanese semantic retrieval quality evaluation has not been performed.
+  Phase 4 core completion does not mean the Vector Search product feature is production-ready.
 
 ## Last known good implementation
 
-- Implementation commit: `7b7f9d0ef2d5150227dea24a6b2fc1db2186c1a1`
-- Commit title: `brain-twin-2: Sprint 4D benchmark final hardening`
-- Local test count at that commit: **322 passed**
-- GitHub Actions run: `33011147727`
-- GitHub Actions result: **success** (headSha confirmed to match the pushed commit)
-- External review since this commit: Sprint 4C final hardening GO/COMPLETE; Sprint 4D
-  associative integration GO, CLI hardening GO, failure/recovery/migration validation GO,
-  benchmark harness final hardening GO. Sprint 4D's sole remaining blocker per this review:
-  the Windows official ExactScan benchmark has not been run.
-- This round attempted the Windows official benchmark but ran in this session's Linux
-  environment (no Windows machine available); see `docs/VECTOR_WINDOWS_BENCHMARK.md` and
-  `WORKLOG.md` for what was and was not done, and this round's commit once pushed.
+- Implementation commit: this closeout commit (exact SHA and Actions run recorded after push)
+- Commit title: `brain-twin-2: close Sprint 4D after Windows benchmark`
+- Local Windows tests: **321 passed, 1 skipped** (expected POSIX-only `resource` skip)
+- GitHub Actions: pending exact-SHA verification for this closeout commit
+- External review: Sprint 4D **GO / COMPLETE**; Phase 4 Vector Retrieval Core
+  **GO / COMPLETE**.
 
 ## Completed review fixes — verify before Vector Search
 
@@ -166,40 +152,32 @@ even be attempted, all in `scripts/vector_benchmark.py`:
 The original Linux benchmark run is kept in `docs/VECTOR_WINDOWS_BENCHMARK.md` as an
 explicitly-relabeled historical record (its `G` column was related-expansion-only, not
 end-to-end); a corrected Linux re-measurement with the fixed script was added alongside it.
-Windows numbers remain pending in their own section of that document — never merged with the
-Linux figures.
+The official Windows numbers now follow in their own section of that document — never merged
+with the Linux figures.
 
-### 9. Sprint 4D: attempted Windows official benchmark (this round)
+### 9. Sprint 4D: Windows official benchmark and closeout
 
-This round's instruction required the official Windows ExactScan benchmark and a small test
-fix. `tests/test_vector_benchmark.py::test_generated_event_dates_are_deterministic_across_runs`
-was comparing `row[0]` from `SELECT id, event_date FROM memories`, i.e. comparing `id` (which
-is deterministic by construction regardless of date generation) rather than `event_date` —
-fixed to `SELECT event_date FROM memories` so the test actually exercises date-generation
-determinism. `docs/CURRENT_STATE.md` was synced to reflect Sprint 4C final hardening's
-external review GO/COMPLETE and this round's benchmark-harness GO.
+The official ExactScan benchmark completed on the Windows development machine. Windows
+retrieval was roughly 2–3 times slower than the corrected Linux reference at the measured
+10,000-Memory points. About 1,000 Memories remained comfortable/interactive; 10,000/384 was
+correct but noticeably slow; 10,000/768 was unsuitable as the primary interactive backend.
+`ExactScanBackend` remains the reference implementation, fallback, and small-Vault backend.
+No hard-coded threshold was added because the intermediate range was not directly measured.
 
-The Windows official benchmark itself was **not run**: this session's environment is Linux
-(`platform.system() == "Linux"`), not the required Windows machine. No Windows numbers were
-estimated, extrapolated, or substituted from the existing Linux figures. This remains Sprint
-4D's sole outstanding item.
+External review declared Sprint 4D and Phase 4 Vector Retrieval Core **GO / COMPLETE**.
+Production activation remains pending on a production embedding provider, a production-scale
+ANN/vector-index backend, and Japanese semantic retrieval quality evaluation.
 
 ## Next authorized task
 
-**Sprint 4D: implemented and validated; external review pending.** Sprint 4D overall is
-**not complete** — the Windows official ExactScan benchmark is still pending (this session
-has no Windows machine, confirmed via `platform.system()`). Sprint 4C final hardening,
-Sprint 4D's associative integration, CLI hardening, failure/recovery/migration validation, and
-benchmark harness final hardening all already have external review GO; only the Windows
-benchmark run itself remains.
+Sprint 4D and Phase 4 Vector Retrieval Core are **GO / COMPLETE**. Stop at closeout; no Phase
+5 or production activation work is authorized by this task.
 
-Do **not** begin Sprint 4E-equivalent scope, a production embedding provider,
-`SqliteVecBackend`, `ask`, Contradiction Detection, Memory Consolidation, or smartphone
-integration until Sprint 4D is complete and reviewed. When a session with access to the actual
-Windows development machine picks this up, it should run the official Windows benchmark using
-`scripts/vector_benchmark.py` (now portable) and record results in
-`docs/VECTOR_WINDOWS_BENCHMARK.md`'s "Windows official run" section — do not estimate,
-extrapolate, or reuse the Linux figures in place of a real Windows run.
+The next production work requires separate authorization and includes selecting/implementing
+a production embedding provider, selecting/implementing a production-scale ANN/vector-index
+backend, and evaluating Japanese semantic retrieval quality. Do **not** begin `ask`,
+Contradiction Detection, Memory Consolidation, smartphone integration, or Phase 5 without an
+explicit instruction.
 
 ## Core invariants
 

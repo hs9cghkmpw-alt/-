@@ -95,7 +95,7 @@ python brain.py timeline
 Vaultは既定で `brain-twin-2/vault/` に作成されます。**Obsidianでこのフォルダを開くと**、
 Daily Log・Memory・メタデータ(frontmatter)を人間が普通に閲覧できます。
 
-### Sprint 4C/4D: Vector / Hybrid Primary Search(外部レビュー待ち)
+### Sprint 4C/4D: Vector / Hybrid Primary Search(COMPLETE)
 
 `search` に `--vector` / `--hybrid` を付けると、通常のFTS5 lexical検索の代わりに
 Vector Primary SearchまたはHybrid Primary Search(lexical + vectorのWeighted
@@ -589,7 +589,7 @@ Markdown/Raw Log/SQLiteの内容が一致すること、`reindex`後も状態が
 
 ## 今後(まだ実装していないもの)
 
-### Vector Search Sprint 4A（外部レビュー待ち）
+### Vector Search Sprint 4A（COMPLETE）
 
 provider/profile/backend contract、canonical embedding document/hash、backend共通の
 little-endian float32 BLOB cache、ExactScan reference backend、embedding用SQLite schemaを実装した。
@@ -630,7 +630,7 @@ upsertしない。同一active profileかつbackend stateが完全にreadyの場
 またtitle/content変更時はSQLite triggerが既存embeddingを即時invalid化し、ExactScanはvalid rowを
 top-K計算前にSQLで限定する。したがってsync前やprovider失敗中にstale vectorは検索候補にならない。
 
-### Vector Search Sprint 4C(外部レビュー待ち)
+### Vector Search Sprint 4C(COMPLETE)
 
 「Sprint 4Cの目的」節の「使い方」に実際のコマンド例がある。設計上のポイントのみここに記録する。
 
@@ -673,12 +673,12 @@ production embedding provider(sentence-transformers/OpenAI/Ollama等)と`SqliteV
 adapterはSprint 4Cでも意図的に未実装のまま(`ExactScanBackend` + fake/recording providerのみで
 検索architecture自体を完成させる方針)。
 
-### Vector Search Sprint 4D(実装・validated、Windows benchmark pending — 全体は未完了)
+### Vector Search Sprint 4D(GO / COMPLETE)
 
-Sprint 4Dは以下の状態(**Sprint 4D: implemented and validated; external review pending。
-Windows ExactScan benchmarkが完了するまでSprint 4D全体としては未完了**、
-Phase 4 Vector Retrieval Core / Production activationについても同様に自己COMPLETE宣言は
-しない)。
+Sprint 4DはWindows実機ExactScan benchmarkを含めてexternal review **GO / COMPLETE**。
+Phase 4 Vector Retrieval Coreも **GO / COMPLETE**。ただしProduction Vector Search activationは
+production embedding provider、production-scale backend、日本語semantic retrieval品質評価が
+未完了のため **PENDING** であり、製品機能のproduction-ready宣言ではない。
 
 - **Associative Retrieval統合**: **reviewed GO**。`retrieval.py`の1-hop展開ロジックを
   `retrieve_from_primary()`として抽出し、primary結果の型に依存しない(`memory_id`属性
@@ -697,7 +697,7 @@ Phase 4 Vector Retrieval Core / Production activationについても同様に自
   inactive/delete除外、**SQLite全削除→reindex→resync**の完全復旧、legacy schema
   self-heal(複数gapを同時に持つ実DB fixtureで検証)、malformed/破損cacheのfail-safeを
   実DB fixtureで確認した。詳細は`docs/VECTOR_RECOVERY_VALIDATION.md`。
-- **Windows benchmark**: **Linux substitute run: completed / Windows実機run: pending**。
+- **Windows benchmark**: **Linux reference run / Windows official runともにcompleted**。
   `scripts/vector_benchmark.py`(1k/10k Memories × dimension 384/768、`ExactScanBackend`
   reference/fallback専用、production providerなし)。外部レビューでbenchmark scriptに
   3件の修正が必要と指摘され、今回対応した: (1) module top-levelの`import resource`が
@@ -708,9 +708,9 @@ Phase 4 Vector Retrieval Core / Production activationについても同様に自
   hybrid_search+retrieve_from_primaryを同一timed callableで実行)で真のend-to-end値を
   計測、(3) synthetic `event_date`の手計算がFeb 30等invalid dateを生成しうる問題を
   `date + timedelta`で修正。修正後にLinuxで再測定した値も追加した(捏造ではなく実測)。
-  **このセッションはLinuxのリモート実行環境のためWindows実機での正式benchmarkはまだ
-  未実施**。詳細・両方の実測値は`docs/VECTOR_WINDOWS_BENCHMARK.md`
-  (「Windows official run」セクションはpendingのまま)。
+  Windows実機では約1k Memoriesはinteractive、10k/384はcorrectだがnoticeably slow、
+  10k/768はinteractive primary backendとして不適だった。詳細・両OSの別表は
+  `docs/VECTOR_WINDOWS_BENCHMARK.md`。
 
 production embedding providerと`SqliteVecBackend`本番adapterは引き続き未実装であり、
 上記のいずれも「production Vector Search性能/完了」を意味しない。
@@ -718,9 +718,9 @@ production embedding providerと`SqliteVecBackend`本番adapterは引き続き�
 ### 次にやるべきPhase
 
 Phase 1〜3(Memory Foundation、Automatic Memory Worker、Retrieval)は完了している。
-Vector Search(Phase 4)はSprint 4A〜4Dまで実装済み。Sprint 4Dのうち associative
-integration・CLI hardening・failure/recovery/migration validationはreviewed GO済みだが、
-**Windows ExactScan benchmarkが未実施のため、Sprint 4D全体としてはまだ完了していない**。
-次に許可されるまでは、Sprint 4E相当のscope・production embedding provider・
+Vector Retrieval Core(Phase 4 / Sprint 4A〜4D)は **GO / COMPLETE**。`ExactScanBackend`は
+reference implementation / fallback / small-Vault backendとして維持し、production-scaleには
+将来のANN/vector-index backendが必要。Production Vector Search activationは **PENDING**。
+次に明示許可されるまでは、production embedding provider・
 `SqliteVecBackend`本番adapter・`ask`/LLM・Contradiction Detection・Memory Consolidation・
 smartphone統合には進まない。
