@@ -6,177 +6,87 @@ Last updated: 2026-08-28
 
 - Repository: `hs9cghkmpw-alt/-`
 - Project: `brain-twin-2/`
-- Working branch: `brain-twin-dev`
-- Legacy project `brain-twin/`: out of scope unless explicitly requested
+- Branch: `brain-twin-dev`
+- Legacy `brain-twin/`: out of scope unless explicitly requested
 
-## Current phase
+## Phase status
 
-- Phase 1 — Memory Foundation: **complete**
-- Phase 2 — Automatic Memory Worker / Entity Extraction / Link generation: **complete**
-- Phase 3 — Retrieval:
-  - Associative Retrieval (1-hop outgoing + incoming links): **implemented**
-  - Timeline Search (`event_date` range filtering): **implemented**
-  - Final hardening review: **complete**
-- Phase 4 — Vector Retrieval Core: **GO / COMPLETE**
-  - Sprint 4A: **COMPLETE**
-  - Sprint 4B: **COMPLETE**
-  - Sprint 4C: **COMPLETE**
-  - Sprint 4D: **GO / COMPLETE**
-  - Windows official ExactScan benchmark: **complete** on the Windows development machine
-    (Windows 11, AMD64, Python 3.12.10, SQLite 3.49.1; full results and Linux comparison in
-    `docs/VECTOR_WINDOWS_BENCHMARK.md`).
+- Phase 1 — Memory Foundation: **COMPLETE**
+- Phase 2 — Automatic Memory Worker / Entity Extraction / Link generation: **COMPLETE**
+- Phase 3 — Retrieval: **COMPLETE**
+- Phase 4 — Vector Retrieval Core (4A–4D): **GO / COMPLETE**
 - Production Vector Search activation: **PENDING**
-  - production embedding provider is not implemented;
-  - production-scale ANN/vector backend is not implemented/selected;
-  - Japanese semantic retrieval quality candidate evaluation has not yet been performed;
-  - Production Vector Activation design received external review **GO** on 2026-08-27 after the
-    review-fix commit `c8012c6311bfac8f8f68fdc5a7790d0eeed0a6ac`;
-  - provisional pair remains pinned `Qwen/Qwen3-Embedding-0.6B` direct Sentence Transformers
-    provider + rebuildable FAISS HNSW sidecar, subject to PA1 Japanese gold evaluation and Windows
-    PA3 1k/10k/100k ANN gates;
-  - PA1 model/backend-independent Japanese retrieval evaluation harness is **implemented;
-    external review pending** at implementation commit
-    `0f93a92ef9186e6331cc5dce0de416914e488479`. Exact-SHA CI run `33173098200` succeeded with
-    **354 passed**. The seed fixture contains 36 synthetic Memories / 24 queries (15 dev / 9 blind),
-    all required slices, and no real Vault data. Final quality corpus expansion toward 300–500
-    Memories / 120 queries and real candidate model runs remain deferred;
-  - Design: `docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md`; ADR draft:
-    `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`; PA1 harness:
-    `docs/JAPANESE_RETRIEVAL_EVALUATION.md`.
-  Phase 4 core completion does not mean the Vector Search product feature is production-ready.
 
-## Last known good implementation
+Phase 4 core completion is not a production-ready Vector Search declaration. A production embedding provider, production ANN backend, and Japanese semantic acceptance run are still pending.
 
-- Latest implementation commit: `0f93a92ef9186e6331cc5dce0de416914e488479`
-- Commit title: `brain-twin-2: add PA1 Japanese retrieval evaluation harness`
-- GitHub Actions run: `33173098200`
-- GitHub Actions result: **success**; `headSha` exactly matched the implementation commit
-- CI tests: **354 passed** on Ubuntu / Python 3.11.16
-- PA1 focused additions: 32 tests (29 harness/metric/data/report/manifest tests + 3 existing-search
-  adapter wiring tests)
-- Status: PA1 evaluation harness **implemented; external review pending**. This is evaluation-only
-  infrastructure and must not be interpreted as production Vector Search activation or as model
-  selection evidence.
-- Previous production retrieval-core closeout remains Sprint 4D / Phase 4 **GO / COMPLETE** at
-  `68ac6e420332bf87feecb47eb32b67cd84bd4016`.
+## Production Vector Activation
 
-## Completed review fixes — verify before Vector Search
+The technical-selection design received review GO after `c8012c6311bfac8f8f68fdc5a7790d0eeed0a6ac`. The provisional pair remains pinned Qwen3-Embedding-0.6B via direct Sentence Transformers plus a rebuildable FAISS HNSW sidecar, subject to PA1 Japanese quality evidence and PA3 Windows ANN gates.
 
-### 1. Persist real link strength through Retrieval
+Design documents:
 
-Phase 2の実 `LinkSuggestion.strength` をMarkdown `link_details`とSQLiteへ保存し、
-Retrievalも固定relation weightではなく保存値の合計でrankingする。legacy Linkは
-relation種別によらない保守的なstrength `0.25`へ非破壊migration/reindexする。
+- `docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md`
+- `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`
 
-- process / reindex / reconcile / crash recoveryで同じstrengthを復元
-- strength列の無い既存DBはconnect時に非破壊self-heal
+## PA1 — Japanese Retrieval Evaluation Harness
 
-### 2. Avoid loading every related Memory body before applying `related_limit`
+Status: **implemented + self-review hardening; external independent review pending**.
 
-ranking前は本文を含まない軽量candidateだけを取得し、dedupe/ranking後の
-`related_limit` IDに限ってtitle/content/type/event_dateを取得する。
-outgoing/incoming、inactive除外、1-hop、決定的順序は維持する。
+Initial implementation:
 
-### 3. Sprint 4C: embedding consistency race between provider call and cache write
+- commit `0f93a92ef9186e6331cc5dce0de416914e488479`
+- exact-SHA Actions run `33173098200`: **success**, `354 passed`
+- handoff/CI metadata commit `1d4d70fdc26751538788729484aac1cdcc7dc528`
+- exact-SHA Actions run `33173303966`: **success**
 
-`EmbeddingService.sync()` computed a Memory's `content_hash` before the (potentially slow)
-provider call, then wrote `is_valid=1` using that pre-call hash without re-checking current
-content. A concurrent title/content edit during the provider call could let a stale vector
-become searchable.
+Self-review found several harness-level gaps despite green tests. The current hardening round fixes them without changing production `brain_twin/` code:
 
-First pass: re-read the Memory in a short (non-transactional) read immediately before the
-write and skip the write when the current content_hash no longer matched. This closed the
-"during the provider call" window but left a second, narrower window open: another writer
-could still commit a change between that re-read and the canonical write itself, because the
-re-read was a plain `SELECT` that did not yet hold the write lock.
+1. live evaluation now measures first-call plus 30 warm repeats/query by default, true median/p95/max, ranking drift, and best-effort process peak RSS (Windows `PeakWorkingSetSize`; POSIX `getrusage`);
+2. committed/open `blind` labels are no longer treated as formal blind evidence; dataset identity records `judgement_visibility`, and held-out blind reports redact per-query/per-slice diagnostics;
+3. ExactScan-vs-ANN comparison requires identical canonical dataset hash/split/query IDs;
+4. reports verify manifest/run dataset identity before serialization;
+5. deterministic 95% bootstrap CIs and paired candidate-minus-baseline query deltas are available;
+6. manifest secret-shape rejection is broadened while instruction text remains hash-only;
+7. the prior even-count latency “median” bug is replaced by the mathematical median plus nearest-rank p95.
 
-Final hardening: the commit-chunk write path issues `BEGIN IMMEDIATE` *before* the
-re-verification read, so the read-verify-write sequence for canonical cache + backend
-`sync_upsert` runs inside one held write lock, with no gap a second writer could use. The provider
-call stays outside the transaction. Exceptions roll back the chunk and leave the item for the next
-`sync()`; staging activation re-verifies `ready == total_active` immediately before switching.
+The committed seed remains intentionally small and synthetic: 36 Memories / 24 queries (15 dev / 9 blind-labelled). Because its judgements are in the repository, its blind-labelled subset is pipeline-test data only, not acceptance-blind data.
 
-### 4. Sprint 4C: deterministic lexical tie-break for Hybrid ranking
+PA1 documentation: `docs/JAPANESE_RETRIEVAL_EVALUATION.md`.
 
-`db.search_lexical_candidates()` (the Hybrid-only pure-BM25 API) now uses explicit
-`ORDER BY score ASC, m.id ASC`, so tied BM25 candidates have deterministic `lexical_rank` and RRF
-fusion. `db.search()` / `search.search()` (plain-search backward-compat path) are unchanged.
+### Still required before choosing a model
 
-### 5. Sprint 4D: connect Hybrid/Vector Primary to Associative Retrieval
+- expand to roughly 300–500 Memories / 120 queries;
+- create a genuinely held-out blind set outside the tuning workspace;
+- two-judge calibration/adjudication;
+- tokenizer-aware near-512 / 2k / 8k cases;
+- predeclare Windows CPU/RAM/latency acceptance budgets;
+- run pinned Qwen/BGE-M3/E5/Nomic/GTE/MiniLM candidates and required Qwen instruction/dimension comparisons.
 
-`retrieval.retrieve_from_primary()` accepts any Primary result exposing `memory_id`, allowing plain,
-Vector, and Hybrid Primary results to use the same one-hop outgoing+incoming associative expansion.
-The CLI supports `--vector --related` and `--hybrid --related` without silent lexical fallback.
+No production model has been downloaded or evaluated yet.
 
-### 6. Sprint 4D: CLI hardening for negative `--related-limit`
+## Last known good production retrieval core
 
-`_cmd_search` validates a negative `--related-limit` before provider/vector work starts, returning a
-clear error and printing no partial Primary results.
+- implementation commit: `68ac6e420332bf87feecb47eb32b67cd84bd4016`
+- Windows tests: `321 passed, 1 skipped` (expected POSIX-only resource skip)
+- exact-SHA Actions run: `33033340980`, **success**
+- Sprint 4D / Phase 4 Vector Retrieval Core: **GO / COMPLETE**
 
-### 7. Sprint 4D: recovery/migration/corruption validation
+## Current validation state
 
-Provider partial-failure resume, profile-switch failure preserving the old active generation,
-backend-only recovery, stale/inactive exclusion, full SQLite deletion + Vault reindex + resync,
-combined legacy schema self-heal, and malformed/corrupt cache rejection were validated with isolated
-fixtures. Full details: `docs/VECTOR_RECOVERY_VALIDATION.md`.
+- PA1 pre-hardening HEAD `1d4d70fdc26751538788729484aac1cdcc7dc528`: CI **success**.
+- PA1 self-review hardening: implementation prepared in the current task; exact-SHA CI must be recorded after push before this round can be called complete.
 
-### 8. Sprint 4D benchmark final hardening
+## Next authorized action
 
-`scripts/vector_benchmark.py` is Windows-portable (`resource` optional), distinguishes related-only
-from true Hybrid+Related end-to-end timing, and generates valid deterministic dates. Corrected Linux
-reference measurements and official Windows measurements are kept separate in
-`docs/VECTOR_WINDOWS_BENCHMARK.md`.
-
-### 9. Sprint 4D: Windows official benchmark and closeout
-
-The official ExactScan benchmark completed on the Windows development machine. Windows retrieval was
-roughly 2–3 times slower than the corrected Linux reference at the measured 10,000-Memory points.
-About 1,000 Memories remained comfortable/interactive; 10,000/384 was correct but noticeably slow;
-10,000/768 was unsuitable as the primary interactive backend. `ExactScanBackend` remains the
-reference implementation, fallback, and small-Vault backend. No hard-coded threshold was added for
-the unmeasured intermediate range.
-
-External review declared Sprint 4D and Phase 4 Vector Retrieval Core **GO / COMPLETE**.
-Production activation remains pending on a production embedding provider, production-scale ANN
-backend, and Japanese semantic retrieval quality evidence.
-
-### 10. Production activation design and PA1 evaluation harness
-
-Production activation design received external review **GO** after four fixes: Qwen instruction
-language is evaluated rather than preselected; FAISS HNSW physical identity/update semantics are
-explicit; FAISS Windows packaging provenance is correctly distinguished; and sqlite-vec stable vs
-experimental ANN status is separated.
-
-PA1 then implemented an evaluation-only `brain_twin_eval/` package with strict synthetic dataset
-validation, deterministic dataset hashing, Recall/MRR/nDCG/must-hit/explicit-hard-negative metrics,
-per-slice + dev/blind aggregation, ANN-vs-Exact Recall@K, experiment manifests that do not persist raw
-instruction text or secrets, JSON/Markdown reports, and thin adapters for the existing lexical,
-Vector, and Hybrid APIs. Production `brain_twin/` does not import this package. No model, provider,
-FAISS, or other ANN dependency was installed. PA1 is **external review pending**, not self-declared
-GO/COMPLETE.
-
-## Next authorized task
-
-**External review of the PA1 Japanese Retrieval Evaluation Harness is next.** Do not begin real
-Qwen/BGE/E5/Nomic/GTE model runs, PA2 production-provider implementation, PA3 ANN implementation,
-PA4 integration, `ask`, Contradiction Detection, Memory Consolidation, smartphone integration, or
-Phase 5 until explicitly authorized after review.
+Finish this PA1 hardening round, run exact-SHA CI, then stop for external independent review. Do **not** begin PA2, PA3, PA4, `ask`, Contradiction Detection, Memory Consolidation, smartphone integration, or Phase 5 without explicit authorization.
 
 ## Core invariants
 
-- Markdown/Vault is the persistent source of truth.
-- SQLite is a rebuildable index/cache.
+- Markdown/Vault is the persistent Memory SOT.
+- SQLite is rebuildable index/cache; canonical embedding BLOBs remain derived canonical cache.
+- Vector/ANN sidecars remain disposable and rebuildable from canonical BLOBs.
+- Normal `reindex` remains provider/network-free.
 - Raw Log original text is preserved.
-- `reindex` must reconstruct derived SQLite state from Markdown.
-- Recovery must not reclassify an already-established historical Memory outcome with a newer classifier.
-- Crash/retry behavior must remain idempotent and consistent.
-- Keep modules maintainable, responsibilities separated, and tests isolated from real user data.
-- Evaluation-only code must not become a dependency of production `brain_twin/` runtime code.
-- Do not modify `brain-twin/` without explicit instruction.
-- Work on `brain-twin-dev` unless the user explicitly changes the branch policy.
-
-## Shared handoff protocol
-
-All agents must follow repository-root `AGENTS.md`.
-Claude Code also has repository-root `CLAUDE.md` as its entry point.
-Every completed task must append to `docs/WORKLOG.md` and update this file if the state above changed.
+- Tests/evaluation fixtures never touch a real user Vault.
+- Production code must not depend on `brain_twin_eval`.
+- Keep responsibilities separated and handoffs recorded in `WORKLOG.md`.
