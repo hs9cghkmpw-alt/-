@@ -74,7 +74,7 @@ No production model has been downloaded or evaluated yet.
 ## Current validation state
 
 - PA1 pre-hardening HEAD `1d4d70fdc26751538788729484aac1cdcc7dc528`: CI **success**.
-- PA1 self-review hardening: implementation prepared in the current task; exact-SHA CI must be recorded after push before this round can be called complete.
+- PA1 self-review hardening implementation commit is being published; exact-SHA CI must pass before this round is complete.
 
 ## Next authorized action
 
