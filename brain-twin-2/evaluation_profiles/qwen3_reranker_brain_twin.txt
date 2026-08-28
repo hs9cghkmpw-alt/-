@@ -1,0 +1,1 @@
+Given a personal memory retrieval query, identify passages that are relevant to what the user is trying to remember.

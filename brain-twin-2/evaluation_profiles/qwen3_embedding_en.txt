@@ -1,0 +1,2 @@
+Instruct: Given a personal memory retrieval query, retrieve the memory passages that best match what the user is trying to remember.
+Query:{query}
