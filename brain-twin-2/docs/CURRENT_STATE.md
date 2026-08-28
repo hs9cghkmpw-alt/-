@@ -1,6 +1,6 @@
 # Brain Twin 2 — Current State
 
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 ## Active development context
 
@@ -17,16 +17,33 @@ Last updated: 2026-08-28
 - Phase 4 — Vector Retrieval Core (4A–4D): **GO / COMPLETE**
 - Production Vector Search activation: **PENDING**
 
-Phase 4 core completion is not a production-ready Vector Search declaration. A production embedding provider, production ANN backend, and Japanese semantic acceptance run are still pending.
+Phase 4 core completion is not a production-ready Vector Search declaration. A production embedding provider, production ANN backend, reranker acceptance, and Japanese semantic acceptance run are still pending.
+
+## Target second-brain architecture
+
+The user explicitly authorized the desired end-state architecture on 2026-08-29. See `docs/ADR_BRAIN_TWIN_TARGET_ARCHITECTURE.md`.
+
+Target roles:
+
+- automatic organization: a separate replaceable local instruction-following LLM with schema-constrained output;
+- exact/lexical recall: SQLite FTS / BM25;
+- dense semantic recall: **Qwen3-Embedding-0.6B as the preferred target**, still subject to PA1 empirical hard gates;
+- post-retrieval relevance filtering: **Qwen3-Reranker-0.6B as the preferred target**, to be measured off/on against the same candidate pool before production activation;
+- associative recall: preserve the existing Entity / Link one-hop expansion after primary retrieval;
+- large-Vault ANN acceleration: FAISS HNSW remains the preferred backend target, subject to PA3;
+- persistent Memory SOT: Markdown / Obsidian Vault.
+
+This is an architecture preference, not permission to skip evidence. If Qwen fails a predeclared acceptance gate or is materially inferior on Brain Twin-shaped evaluation, reopen the component decision rather than shipping a known-worse model. The organizer LLM itself has not yet been selected.
 
 ## Production Vector Activation
 
-The technical-selection design received review GO after `c8012c6311bfac8f8f68fdc5a7790d0eeed0a6ac`. The provisional pair remains pinned Qwen3-Embedding-0.6B via direct Sentence Transformers plus a rebuildable FAISS HNSW sidecar, subject to PA1 Japanese quality evidence and PA3 Windows ANN gates.
+The technical-selection design received review GO after `c8012c6311bfac8f8f68fdc5a7790d0eeed0a6ac`. The preferred target now remains pinned Qwen3-Embedding-0.6B via direct Sentence Transformers plus a rebuildable FAISS HNSW sidecar, with Qwen3-Reranker-0.6B added as the target reranking stage. All remain subject to empirical gates before production activation.
 
 Design documents:
 
 - `docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md`
 - `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`
+- `docs/ADR_BRAIN_TWIN_TARGET_ARCHITECTURE.md`
 
 ## PA1 — Japanese Retrieval Evaluation Harness
 
@@ -61,16 +78,17 @@ The committed seed remains intentionally small and synthetic: 36 Memories / 24 q
 
 PA1 documentation: `docs/JAPANESE_RETRIEVAL_EVALUATION.md`.
 
-### Still required before choosing a model
+### Still required before choosing a production embedding profile
 
 - expand to roughly 300–500 Memories / 120 queries;
 - create a genuinely held-out blind set outside the tuning workspace;
 - two-judge calibration/adjudication;
 - tokenizer-aware near-512 / 2k / 8k cases;
 - predeclare Windows CPU/RAM/latency acceptance budgets;
-- run pinned Qwen/BGE-M3/E5/Nomic/GTE/MiniLM candidates and required Qwen instruction/dimension comparisons.
+- run pinned Qwen/BGE-M3/E5/Nomic/GTE/MiniLM candidates and required Qwen instruction/dimension comparisons;
+- evaluate Qwen3-Reranker-0.6B off/on on the same frozen candidate pool, including quality delta and Windows latency/RAM.
 
-No production model has been downloaded or evaluated yet.
+No production embedding or reranker model has been downloaded or evaluated yet.
 
 ## Last known good production retrieval core
 
@@ -81,15 +99,16 @@ No production model has been downloaded or evaluated yet.
 
 ## Next authorized action
 
-**Independent external review of PA1 hardening.** Stop here. Do **not** begin PA2, PA3, PA4, `ask`, Contradiction Detection, Memory Consolidation, smartphone integration, or Phase 5 without explicit authorization.
+**Independent external review of PA1 hardening.** Stop here. Do **not** begin PA2, PA3, PA4, production reranker integration, organizer-LLM integration, `ask`, Contradiction Detection, Memory Consolidation, smartphone integration, or Phase 5 without explicit authorization.
 
 ## Core invariants
 
 - Markdown/Vault is the persistent Memory SOT.
+- Raw captured text remains preserved; AI-derived organization cannot destructively replace it.
 - SQLite is rebuildable index/cache; canonical embedding BLOBs remain derived canonical cache.
 - Vector/ANN sidecars remain disposable and rebuildable from canonical BLOBs.
+- Organizer LLM, embedding provider, reranker, and ANN backend remain independently replaceable.
 - Normal `reindex` remains provider/network-free.
-- Raw Log original text is preserved.
 - Tests/evaluation fixtures never touch a real user Vault.
 - Production code must not depend on `brain_twin_eval`.
 - Keep responsibilities separated and handoffs recorded in repository documentation.
