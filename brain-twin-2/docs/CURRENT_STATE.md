@@ -35,9 +35,11 @@ Last updated: 2026-08-28
     provider + rebuildable FAISS HNSW sidecar, subject to PA1 Japanese gold evaluation and Windows
     PA3 1k/10k/100k ANN gates;
   - PA1 model/backend-independent Japanese retrieval evaluation harness is **implemented;
-    external review pending**. The seed fixture contains 36 synthetic Memories / 24 queries
-    (15 dev / 9 blind), all required slices, and no real Vault data. Final quality corpus expansion
-    toward 300–500 Memories / 120 queries and real candidate model runs remain deferred;
+    external review pending** at implementation commit
+    `0f93a92ef9186e6331cc5dce0de416914e488479`. Exact-SHA CI run `33173098200` succeeded with
+    **354 passed**. The seed fixture contains 36 synthetic Memories / 24 queries (15 dev / 9 blind),
+    all required slices, and no real Vault data. Final quality corpus expansion toward 300–500
+    Memories / 120 queries and real candidate model runs remain deferred;
   - Design: `docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md`; ADR draft:
     `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`; PA1 harness:
     `docs/JAPANESE_RETRIEVAL_EVALUATION.md`.
@@ -45,15 +47,18 @@ Last updated: 2026-08-28
 
 ## Last known good implementation
 
-- Production retrieval-core implementation commit: `68ac6e420332bf87feecb47eb32b67cd84bd4016`
-- Commit title: `brain-twin-2: close Sprint 4D after Windows benchmark`
-- Local Windows tests: **321 passed, 1 skipped** (expected POSIX-only `resource` skip)
-- GitHub Actions run: `33033340980`
-- GitHub Actions result: **success** (`headSha` exactly matched the implementation commit)
-- External review: Sprint 4D **GO / COMPLETE**; Phase 4 Vector Retrieval Core
-  **GO / COMPLETE**.
-- PA1 evaluation harness is a separate evaluation-only implementation currently awaiting external
-  review and must not be treated as production activation.
+- Latest implementation commit: `0f93a92ef9186e6331cc5dce0de416914e488479`
+- Commit title: `brain-twin-2: add PA1 Japanese retrieval evaluation harness`
+- GitHub Actions run: `33173098200`
+- GitHub Actions result: **success**; `headSha` exactly matched the implementation commit
+- CI tests: **354 passed** on Ubuntu / Python 3.11.16
+- PA1 focused additions: 32 tests (29 harness/metric/data/report/manifest tests + 3 existing-search
+  adapter wiring tests)
+- Status: PA1 evaluation harness **implemented; external review pending**. This is evaluation-only
+  infrastructure and must not be interpreted as production Vector Search activation or as model
+  selection evidence.
+- Previous production retrieval-core closeout remains Sprint 4D / Phase 4 **GO / COMPLETE** at
+  `68ac6e420332bf87feecb47eb32b67cd84bd4016`.
 
 ## Completed review fixes — verify before Vector Search
 
