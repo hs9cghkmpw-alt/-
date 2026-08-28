@@ -1,6 +1,6 @@
 # Brain Twin 2 — Current State
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 
 ## Active development context
 
@@ -27,28 +27,33 @@ Last updated: 2026-08-27
     `docs/VECTOR_WINDOWS_BENCHMARK.md`).
 - Production Vector Search activation: **PENDING**
   - production embedding provider is not implemented;
-  - production-scale vector backend is not implemented/selected;
-  - Japanese semantic retrieval quality evaluation has not been performed.
-  - Technical-selection draft completed on 2026-08-27; external review pending.
-  - Provisional pair: pinned `Qwen/Qwen3-Embedding-0.6B` direct Sentence Transformers
-    provider + rebuildable FAISS HNSW sidecar, subject to Japanese gold evaluation and Windows
-    1k/10k/100k ANN spike gates.
+  - production-scale ANN/vector backend is not implemented/selected;
+  - Japanese semantic retrieval quality candidate evaluation has not yet been performed;
+  - Production Vector Activation design received external review **GO** on 2026-08-27 after the
+    review-fix commit `c8012c6311bfac8f8f68fdc5a7790d0eeed0a6ac`;
+  - provisional pair remains pinned `Qwen/Qwen3-Embedding-0.6B` direct Sentence Transformers
+    provider + rebuildable FAISS HNSW sidecar, subject to PA1 Japanese gold evaluation and Windows
+    PA3 1k/10k/100k ANN gates;
+  - PA1 model/backend-independent Japanese retrieval evaluation harness is **implemented;
+    external review pending**. The seed fixture contains 36 synthetic Memories / 24 queries
+    (15 dev / 9 blind), all required slices, and no real Vault data. Final quality corpus expansion
+    toward 300–500 Memories / 120 queries and real candidate model runs remain deferred;
   - Design: `docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md`; ADR draft:
-    `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`.
-  - External-review fix round completed for instruction comparison, FAISS HNSW physical identity /
-    update semantics, FAISS packaging provenance, and sqlite-vec alpha ANN status; review remains
-    pending and no PA Sprint is authorized.
+    `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`; PA1 harness:
+    `docs/JAPANESE_RETRIEVAL_EVALUATION.md`.
   Phase 4 core completion does not mean the Vector Search product feature is production-ready.
 
 ## Last known good implementation
 
-- Implementation commit: `68ac6e420332bf87feecb47eb32b67cd84bd4016`
+- Production retrieval-core implementation commit: `68ac6e420332bf87feecb47eb32b67cd84bd4016`
 - Commit title: `brain-twin-2: close Sprint 4D after Windows benchmark`
 - Local Windows tests: **321 passed, 1 skipped** (expected POSIX-only `resource` skip)
 - GitHub Actions run: `33033340980`
 - GitHub Actions result: **success** (`headSha` exactly matched the implementation commit)
 - External review: Sprint 4D **GO / COMPLETE**; Phase 4 Vector Retrieval Core
   **GO / COMPLETE**.
+- PA1 evaluation harness is a separate evaluation-only implementation currently awaiting external
+  review and must not be treated as production activation.
 
 ## Completed review fixes — verify before Vector Search
 
@@ -80,110 +85,77 @@ write and skip the write when the current content_hash no longer matched. This c
 could still commit a change between that re-read and the canonical write itself, because the
 re-read was a plain `SELECT` that did not yet hold the write lock.
 
-Final hardening (this round): the commit-chunk write path now issues `BEGIN IMMEDIATE`
-*before* the re-verification read, so the read-verify-write sequence for canonical cache +
-backend `sync_upsert` runs inside one held write lock, with no gap a second writer could use.
-The provider call itself stays outside any transaction. On any exception the transaction is
-rolled back and the item is left for the next `sync()` to reprocess; staging activation still
-re-verifies `ready == total_active` immediately before switching the active profile/backend.
+Final hardening: the commit-chunk write path issues `BEGIN IMMEDIATE` *before* the
+re-verification read, so the read-verify-write sequence for canonical cache + backend
+`sync_upsert` runs inside one held write lock, with no gap a second writer could use. The provider
+call stays outside the transaction. Exceptions roll back the chunk and leave the item for the next
+`sync()`; staging activation re-verifies `ready == total_active` immediately before switching.
 
 ### 4. Sprint 4C: deterministic lexical tie-break for Hybrid ranking
 
-`db.search_lexical_candidates()` (the Hybrid-only pure-BM25 API) ordered by `bm25()` score
-alone; tied scores (e.g. near-duplicate content) left `lexical_rank` order unspecified, which
-could make Hybrid's RRF fusion and best-channel-rank tie-break non-deterministic across
-otherwise-identical calls. Added an explicit `ORDER BY score ASC, m.id ASC` tie-break to this
-Hybrid-only function. `db.search()` / `search.search()` (the plain-search backward-compat
-path) are unchanged.
+`db.search_lexical_candidates()` (the Hybrid-only pure-BM25 API) now uses explicit
+`ORDER BY score ASC, m.id ASC`, so tied BM25 candidates have deterministic `lexical_rank` and RRF
+fusion. `db.search()` / `search.search()` (plain-search backward-compat path) are unchanged.
 
 ### 5. Sprint 4D: connect Hybrid/Vector Primary to Associative Retrieval
 
-`--vector --related` / `--hybrid --related` previously returned an explicit "not yet
-supported" error; Associative Retrieval's 1-hop expansion only ran for plain lexical
-`search`. The expansion logic in `retrieval.py` (previously inlined in `retrieve()`) is now
-`retrieve_from_primary()`: it only requires each primary result to expose `memory_id`
-(a `Protocol`/`TypeVar`, not a concrete import of `search.ScoredResult`), so it works
-unchanged for `search.ScoredResult`, `vector_search.VectorResult`, and `hybrid_search.
-HybridResult` alike. `retrieve()` now just calls `search.search()` then delegates to
-`retrieve_from_primary()` — its behavior and output are unchanged (existing
-`tests/test_retrieval.py` tests pass without modification). The CLI wires `--vector
---related` / `--hybrid --related` through the same function, so relation display is
-identical to the plain-`--related` path.
+`retrieval.retrieve_from_primary()` accepts any Primary result exposing `memory_id`, allowing plain,
+Vector, and Hybrid Primary results to use the same one-hop outgoing+incoming associative expansion.
+The CLI supports `--vector --related` and `--hybrid --related` without silent lexical fallback.
 
 ### 6. Sprint 4D: CLI hardening for negative `--related-limit`
 
-`search --vector/--hybrid --related --related-limit -1` used to run Primary search (and, for
-`--vector`/`--hybrid`, embedding config/provider setup and the vector/hybrid query itself)
-before the `related_limit` validation raised — printing Primary results to stdout for a
-command that was ultimately an error, and doing unnecessary provider/vector work. `_cmd_search`
-now validates `args.related and args.related_limit < 0` before any of that starts, for the
-plain/`--vector`/`--hybrid` paths alike: a clear `[NG]` error, non-zero exit, no provider call,
-no vector/hybrid search call, nothing printed to stdout.
+`_cmd_search` validates a negative `--related-limit` before provider/vector work starts, returning a
+clear error and printing no partial Primary results.
 
-### 7. Sprint 4D: Windows benchmark (Linux-substitute) and failure/recovery/migration/corruption validation
+### 7. Sprint 4D: recovery/migration/corruption validation
 
-`scripts/vector_benchmark.py` measures `ExactScanBackend` + a synthetic offline deterministic
-provider at 1k and 10k Memories, dimension 384 and 768 — explicitly labeled as an
-`ExactScanBackend` reference/fallback benchmark, never "production Vector Search performance"
-(no production provider or `SqliteVecBackend` exists). Run in this session's Linux remote
-execution environment as an explicit substitute for the requested Windows machine; a Windows
-re-run is still needed. Full methodology/results/interpretation in
-`docs/VECTOR_WINDOWS_BENCHMARK.md`.
-
-Failure/recovery/migration/corruption scenarios (provider partial-failure resume, profile
-switch failure keeping the old active profile, backend index loss recovering via
-`rebuild_backend()`, a stale Memory being excluded from Vector-only but still reachable via
-Hybrid's lexical channel until resync, inactive/delete exclusion, a full SQLite-file deletion
-followed by `reindex` + embedding resync, a combined legacy-schema self-heal fixture, and
-malformed/corrupted-cache rejection) were validated against real DB fixtures — new end-to-end
-tests plus citations of pre-existing focused unit tests. Full results in
-`docs/VECTOR_RECOVERY_VALIDATION.md`.
+Provider partial-failure resume, profile-switch failure preserving the old active generation,
+backend-only recovery, stale/inactive exclusion, full SQLite deletion + Vault reindex + resync,
+combined legacy schema self-heal, and malformed/corrupt cache rejection were validated with isolated
+fixtures. Full details: `docs/VECTOR_RECOVERY_VALIDATION.md`.
 
 ### 8. Sprint 4D benchmark final hardening
 
-External review of the Sprint 4D benchmark required three fixes before a Windows run could
-even be attempted, all in `scripts/vector_benchmark.py`:
-
-1. The script imported the POSIX-only `resource` module unconditionally at top level, which
-   has no Windows build and would have crashed the script before it could run there at all.
-   Now guarded with `try`/`except ImportError`; `_machine_info()`/`_peak_rss_kb()` degrade to
-   `None` plus an explanatory `rss_measurement` string instead of raising, and no optional
-   dependency (e.g. `psutil`) was added.
-2. The original `G_hybrid_plus_related` metric only measured `retrieval.retrieve_from_primary()`
-   on a Hybrid Primary result computed once, *outside* the timed loop — i.e.
-   related-expansion overhead only, not genuine end-to-end `search --hybrid --related`
-   latency. Kept (renamed `G_related_expansion_only`) and a new
-   `H_hybrid_plus_related_end_to_end` metric added that calls `hybrid_search()` and
-   `retrieve_from_primary()` together inside the same timed callable on every sample.
-3. Synthetic `event_date` generation used hand-rolled month/day arithmetic that could produce
-   invalid calendar dates (e.g. `2016-02-30`); replaced with `date + timedelta`, which always
-   yields a valid, deterministic date for a given seed/count.
-
-The original Linux benchmark run is kept in `docs/VECTOR_WINDOWS_BENCHMARK.md` as an
-explicitly-relabeled historical record (its `G` column was related-expansion-only, not
-end-to-end); a corrected Linux re-measurement with the fixed script was added alongside it.
-The official Windows numbers now follow in their own section of that document — never merged
-with the Linux figures.
+`scripts/vector_benchmark.py` is Windows-portable (`resource` optional), distinguishes related-only
+from true Hybrid+Related end-to-end timing, and generates valid deterministic dates. Corrected Linux
+reference measurements and official Windows measurements are kept separate in
+`docs/VECTOR_WINDOWS_BENCHMARK.md`.
 
 ### 9. Sprint 4D: Windows official benchmark and closeout
 
-The official ExactScan benchmark completed on the Windows development machine. Windows
-retrieval was roughly 2–3 times slower than the corrected Linux reference at the measured
-10,000-Memory points. About 1,000 Memories remained comfortable/interactive; 10,000/384 was
-correct but noticeably slow; 10,000/768 was unsuitable as the primary interactive backend.
-`ExactScanBackend` remains the reference implementation, fallback, and small-Vault backend.
-No hard-coded threshold was added because the intermediate range was not directly measured.
+The official ExactScan benchmark completed on the Windows development machine. Windows retrieval was
+roughly 2–3 times slower than the corrected Linux reference at the measured 10,000-Memory points.
+About 1,000 Memories remained comfortable/interactive; 10,000/384 was correct but noticeably slow;
+10,000/768 was unsuitable as the primary interactive backend. `ExactScanBackend` remains the
+reference implementation, fallback, and small-Vault backend. No hard-coded threshold was added for
+the unmeasured intermediate range.
 
 External review declared Sprint 4D and Phase 4 Vector Retrieval Core **GO / COMPLETE**.
-Production activation remains pending on a production embedding provider, a production-scale
-ANN/vector-index backend, and Japanese semantic retrieval quality evaluation.
+Production activation remains pending on a production embedding provider, production-scale ANN
+backend, and Japanese semantic retrieval quality evidence.
+
+### 10. Production activation design and PA1 evaluation harness
+
+Production activation design received external review **GO** after four fixes: Qwen instruction
+language is evaluated rather than preselected; FAISS HNSW physical identity/update semantics are
+explicit; FAISS Windows packaging provenance is correctly distinguished; and sqlite-vec stable vs
+experimental ANN status is separated.
+
+PA1 then implemented an evaluation-only `brain_twin_eval/` package with strict synthetic dataset
+validation, deterministic dataset hashing, Recall/MRR/nDCG/must-hit/explicit-hard-negative metrics,
+per-slice + dev/blind aggregation, ANN-vs-Exact Recall@K, experiment manifests that do not persist raw
+instruction text or secrets, JSON/Markdown reports, and thin adapters for the existing lexical,
+Vector, and Hybrid APIs. Production `brain_twin/` does not import this package. No model, provider,
+FAISS, or other ANN dependency was installed. PA1 is **external review pending**, not self-declared
+GO/COMPLETE.
 
 ## Next authorized task
 
-Sprint 4D and Phase 4 Vector Retrieval Core are **GO / COMPLETE**. Production Vector Search
-technical selection is drafted; **external review is the next authorized action**. Do not begin
-PA1–PA4 implementation until the draft receives explicit review/GO. Do **not** begin `ask`,
-Contradiction Detection, Memory Consolidation, smartphone integration, or Phase 5.
+**External review of the PA1 Japanese Retrieval Evaluation Harness is next.** Do not begin real
+Qwen/BGE/E5/Nomic/GTE model runs, PA2 production-provider implementation, PA3 ANN implementation,
+PA4 integration, `ask`, Contradiction Detection, Memory Consolidation, smartphone integration, or
+Phase 5 until explicitly authorized after review.
 
 ## Core invariants
 
@@ -194,6 +166,7 @@ Contradiction Detection, Memory Consolidation, smartphone integration, or Phase 
 - Recovery must not reclassify an already-established historical Memory outcome with a newer classifier.
 - Crash/retry behavior must remain idempotent and consistent.
 - Keep modules maintainable, responsibilities separated, and tests isolated from real user data.
+- Evaluation-only code must not become a dependency of production `brain_twin/` runtime code.
 - Do not modify `brain-twin/` without explicit instruction.
 - Work on `brain-twin-dev` unless the user explicitly changes the branch policy.
 

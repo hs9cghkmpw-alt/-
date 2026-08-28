@@ -181,7 +181,7 @@ Rules:
 - CI: verified against the pushed commit SHA specifically (`headSha` match required before reporting); see commit line below.
 - Commit: this commit.
 - Known issues: the Windows benchmark and machine-info recording were run on this session's Linux remote execution environment as an explicit, clearly-labeled substitute for the requested Windows machine — a genuine Windows-machine re-run is still outstanding before this can be cited as the official Sprint 4D Windows benchmark. No 100k-scale benchmark data point (not required this round). `ExactScanBackend`'s recommended operating range is an observed recommendation from one machine/one run, not a hard-coded threshold (intentionally deferred to a separate review per the task's instruction). `SqliteVecBackend` production adapter and a real embedding provider are still not implemented. This round's implementation itself, and Sprint 4D as a whole, remain externally unreviewed.
-- Next: **Sprint 4D: all planned validation implemented; external review pending.** Do not begin Sprint 4E-equivalent scope, a production embedding provider, `SqliteVecBackend`, `ask`, Contradiction Detection, Memory Consolidation, or smartphone integration until this is reviewed and explicitly approved. A Windows-machine re-run of the benchmark remains an open follow-up but is not treated as a blocker to review.
+- Next: **Sprint 4D: all planned validation implemented; external review pending.** Do not begin Sprint 4E-equivalent scope, a production embedding provider, `SqliteVecBackend`, `ask`, Contradiction Detection`, Memory Consolidation`, or smartphone integration until this is reviewed and explicitly approved. A Windows-machine re-run of the benchmark remains an open follow-up but is not treated as a blocker to review.
 
 ## 2026-08-26 — Claude Code — Sprint 4D benchmark final hardening
 
@@ -268,3 +268,15 @@ Rules:
 - Known issues: exact Qwen instruction/dimension, FAISS packaging path and physical-ID/update
   strategy, ANN parameters, and numeric Windows budgets remain PA1/PA3 evaluation decisions.
 - Next: external review. Production activation remains PENDING; do not begin PA1 without explicit GO.
+
+## 2026-08-28 — ChatGPT — PA1 Japanese retrieval evaluation harness
+
+- Branch: `brain-twin-dev`
+- Base: `c8012c6311bfac8f8f68fdc5a7790d0eeed0a6ac`
+- Scope: implement only the model/backend-independent PA1 evaluation harness after Production Vector Activation Design external-review GO; no model download, production provider, FAISS/ANN implementation, schema migration, or production activation.
+- Changed: added isolated `brain_twin_eval/` dataset/metric/runner/manifest/report modules plus evaluation-side adapters for existing lexical/Vector/Hybrid APIs; added a synthetic privacy-safe seed gold fixture (36 Memories / 24 queries, 15 dev / 9 blind, required slice coverage), precomputed-ranking CLI, JSON/Markdown reports, ANN-vs-Exact Recall@K contract, secret-resistant experiment manifests, `.evaluation-results/` ignore rule, focused tests, and `docs/JAPANESE_RETRIEVAL_EVALUATION.md`. Production `brain_twin/` does not import the evaluation package.
+- Tests: focused PA1 tests passed locally before GitHub commit; full exact-SHA CI is required after push.
+- CI: pending exact-SHA verification after push.
+- Commit: this commit.
+- Known issues: seed fixture is a contract scaffold, not the final 300–500 Memory / 120-query adjudicated corpus; real Qwen/BGE/E5/Nomic/GTE runs, tokenizer-aware 512/2k/8k cases, judge calibration, and numeric Windows acceptance budgets remain deferred. PA2/PA3 are not started.
+- Next: **PA1 evaluation harness implemented; external review pending.** Do not begin real candidate model benchmarking, PA2, PA3, PA4, or Phase 5 until explicitly authorized after review.

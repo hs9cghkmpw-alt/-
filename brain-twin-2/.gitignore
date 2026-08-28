@@ -12,6 +12,9 @@ __pycache__/
 .venv/
 venv/
 
+# Generated evaluation output
+.evaluation-results/
+
 # OS
 .DS_Store
 Thumbs.db
