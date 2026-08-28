@@ -78,11 +78,15 @@ not changed by that hardening.
 - committed/open judgements
 - pipeline/regression seed only
 
-### v2 open benchmark
+### v2 open benchmark — GO for open development
 
-The user explicitly authorized continued progress on 2026-08-29.
+Implementation:
 
-The next PA1 data round expands the open benchmark to:
+- commit `c1a1d9a1b1879c4f8425739d891929159130e95c`
+- exact-SHA Actions run `33219195386`: **success**
+- result: **375 passed**
+
+Shape:
 
 - **360 synthetic Memories**
 - **120 queries**
@@ -90,7 +94,9 @@ The next PA1 data round expands the open benchmark to:
 - 30 broad second-brain scenarios
 - 300 same-domain/same-entity distractor Memories
 - 10 explicit no-answer hard-negative queries
-- long-Memory, spelling/transliteration, mixed-language, short-query, semantic and lexical slices
+- 5 inactive distractors
+- 5 long target Memories
+- required spelling/transliteration, mixed-language, short-query, semantic, lexical and long-Memory slices
 
 Files:
 
@@ -100,22 +106,68 @@ Files:
 - `docs/JAPANESE_RETRIEVAL_EVALUATION.md`
 - `docs/PA1_OPEN_GOLD_V2.md`
 
-The v2 dataset is generated deterministically from committed synthetic source and materialized under
-`.evaluation-results/` when needed. It is public/open by design. Its `blind` labels are **not**
-formal held-out evidence.
+The v2 dataset is deterministic and fully synthetic. It is public/open by design. Its `blind` labels
+exercise split handling only and are **not** formal held-out acceptance evidence.
+
+### Local candidate runner — GO for evaluation scaffolding
+
+Implementation:
+
+- commit `36c364299b107f13125a02d5554d1920eb91c0ec`
+- exact-SHA Actions run `33219538819`: **success**
+- result: **383 passed**
+
+The evaluation-only runtime:
+
+- loads embedding/reranker models only from existing local directories;
+- sets `local_files_only=True` for Sentence Transformers / CrossEncoder loading;
+- performs exact dense ranking over the open corpus so ANN approximation cannot confound embedding quality;
+- supports explicit dimension truncation before normalization;
+- compares Qwen English/Japanese/no-instruction query templates;
+- can rerank a frozen first-stage candidate pool and produce paired OFF-vs-ON metric deltas;
+- refuses duplicate/unknown/inactive candidate IDs;
+- does not persist local model paths or raw instruction text in experiment metadata;
+- does not modify production `brain_twin/`, Vault, SQLite, or production embedding config.
+
+Files:
+
+- `brain_twin_eval/candidate_runtime.py`
+- `scripts/run_local_candidate_pipeline.py`
+- `tests/test_candidate_runtime.py`
+- `evaluation_profiles/qwen3_embedding_en.txt`
+- `evaluation_profiles/qwen3_embedding_ja.txt`
+- `evaluation_profiles/qwen3_embedding_none.txt`
+- `evaluation_profiles/qwen3_reranker_brain_twin.txt`
+- `docs/PA1_LOCAL_CANDIDATE_RUNNER.md`
+
+### Pinned Qwen acquisition — prepared, Windows execution pending
+
+The explicit acquisition helper is `scripts/acquire_pa1_qwen_models.py`. It is never called by
+normal Brain Twin runtime/reindex/evaluation. It verifies the requested immutable revision before
+calling Hugging Face snapshot download and stores models outside the repository.
+
+Pinned PA1 starting revisions:
+
+- Qwen3-Embedding-0.6B: `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`
+- Qwen3-Reranker-0.6B: `e61197ed45024b0ed8a2d74b80b4d909f1255473`
+
+See `docs/PA1_QWEN_ACQUISITION.md`.
 
 ## Still required before choosing a production embedding/reranker profile
 
+- clean Windows Python 3.12 evaluation-environment smoke test and full dependency freeze;
+- explicit pinned model acquisition on the evaluation machine;
 - genuinely held-out blind set outside the tuning workspace;
 - two-judge calibration/adjudication;
 - tokenizer-aware near-512 / 2k / 8k cases;
 - predeclared Windows CPU/RAM/latency acceptance budgets;
-- pinned Qwen/BGE-M3/E5/Nomic/GTE/MiniLM candidate runs;
 - Qwen English/Japanese/no-instruction comparison;
 - allowed-dimension comparison;
-- Qwen3-Reranker-0.6B OFF/ON comparison on the same frozen candidate pool.
+- Qwen3-Reranker-0.6B OFF/ON comparison on the same frozen candidate pool;
+- pinned BGE-M3/E5/Nomic/GTE/MiniLM challenger runs;
+- independent evidence review.
 
-No production embedding or reranker model has yet been downloaded/evaluated by this repository work.
+No production embedding or reranker has been activated.
 
 ## Last known good production retrieval core
 
@@ -126,9 +178,10 @@ No production embedding or reranker model has yet been downloaded/evaluated by t
 
 ## Next authorized action
 
-Continue PA1 evidence preparation and candidate-evaluation scaffolding under the target architecture.
-It is authorized to prepare/open-evaluate candidate embeddings and reranker experiments while
-preserving local/offline and reproducibility requirements.
+Run the explicit pinned Qwen acquisition + clean Windows evaluation-runtime smoke test, freeze the
+actual environment, then execute the open PA1 Qwen instruction comparison. If that passes the
+quality/runtime sanity checks, run Qwen3-Reranker OFF/ON on the same frozen first-stage candidate
+pool. Challenger models follow under the identical harness.
 
 Do **not** silently declare Production Vector Search active. Production provider/backend/reranker
 integration, PA3 FAISS production lifecycle, organizer-LLM integration, `ask`, Contradiction
