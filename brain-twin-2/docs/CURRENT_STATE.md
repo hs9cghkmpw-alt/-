@@ -17,27 +17,31 @@ Last updated: 2026-08-29
 - Phase 4 — Vector Retrieval Core (4A–4D): **GO / COMPLETE**
 - Production Vector Search activation: **PENDING**
 
-Phase 4 core completion is not a production-ready Vector Search declaration. A production embedding provider, production ANN backend, reranker acceptance, and Japanese semantic acceptance run are still pending.
+Phase 4 completion is not production activation. A production embedding provider, ANN backend,
+reranker acceptance, organizer-model selection, and Japanese semantic acceptance run remain open.
 
 ## Target second-brain architecture
 
-The user explicitly authorized the desired end-state architecture on 2026-08-29. See `docs/ADR_BRAIN_TWIN_TARGET_ARCHITECTURE.md`.
+The user explicitly selected the desired architecture on 2026-08-29. See
+`docs/ADR_BRAIN_TWIN_TARGET_ARCHITECTURE.md`.
 
 Target roles:
 
-- automatic organization: a separate replaceable local instruction-following LLM with schema-constrained output;
+- automatic organization: separate replaceable local instruction-following LLM with schema output;
 - exact/lexical recall: SQLite FTS / BM25;
-- dense semantic recall: **Qwen3-Embedding-0.6B as the preferred target**, still subject to PA1 empirical hard gates;
-- post-retrieval relevance filtering: **Qwen3-Reranker-0.6B as the preferred target**, to be measured off/on against the same candidate pool before production activation;
-- associative recall: preserve the existing Entity / Link one-hop expansion after primary retrieval;
-- large-Vault ANN acceleration: FAISS HNSW remains the preferred backend target, subject to PA3;
+- dense semantic recall: **Qwen3-Embedding-0.6B preferred target**, subject to evidence gates;
+- post-retrieval relevance: **Qwen3-Reranker-0.6B preferred target**, measured OFF vs ON;
+- associative recall: existing Entity / Link one-hop expansion;
+- large-Vault ANN: FAISS HNSW preferred target, subject to PA3 Windows gates;
 - persistent Memory SOT: Markdown / Obsidian Vault.
 
-This is an architecture preference, not permission to skip evidence. If Qwen fails a predeclared acceptance gate or is materially inferior on Brain Twin-shaped evaluation, reopen the component decision rather than shipping a known-worse model. The organizer LLM itself has not yet been selected.
+The architecture preference does not permit shipping a component that fails the predeclared gates.
+The organizer LLM is still undecided.
 
 ## Production Vector Activation
 
-The technical-selection design received review GO after `c8012c6311bfac8f8f68fdc5a7790d0eeed0a6ac`. The preferred target now remains pinned Qwen3-Embedding-0.6B via direct Sentence Transformers plus a rebuildable FAISS HNSW sidecar, with Qwen3-Reranker-0.6B added as the target reranking stage. All remain subject to empirical gates before production activation.
+Technical-selection design received review GO after
+`c8012c6311bfac8f8f68fdc5a7790d0eeed0a6ac`.
 
 Design documents:
 
@@ -45,70 +49,100 @@ Design documents:
 - `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`
 - `docs/ADR_BRAIN_TWIN_TARGET_ARCHITECTURE.md`
 
-## PA1 — Japanese Retrieval Evaluation Harness
+## PA1 — Japanese Retrieval Evaluation
 
-Status: **self-review hardening GO for harness code; independent external review pending**.
+### Harness
 
 Initial implementation:
 
-- commit `0f93a92ef9186e6331cc5dce0de416914e488479`
-- exact-SHA Actions run `33173098200`: **success**, `354 passed`
-- handoff/CI metadata commit `1d4d70fdc26751538788729484aac1cdcc7dc528`
-- exact-SHA Actions run `33173303966`: **success**
+- `0f93a92ef9186e6331cc5dce0de416914e488479`
+- exact-SHA Actions `33173098200`: success
+- 354 passed
 
-Self-review hardening implementation:
+Self-review hardening:
 
-- implementation commit `5a2851534f9385ff0e4cc90af89195de300f890f`
-- exact-SHA Actions run `33177339391`: **success**
-- CI environment: Ubuntu 24.04, Python 3.11.16, pytest 9.1.1
-- result: **370 passed in 25.25s**
-- review record: `docs/reviews/PA1_SELF_REVIEW_2026-08-28.md`
+- `5a2851534f9385ff0e4cc90af89195de300f890f`
+- exact-SHA Actions `33177339391`: success
+- 370 passed
 
-Hardening fixed harness-level gaps without changing production `brain_twin/` code:
+Hardening added warm-run latency statistics, RSS, open-vs-held-out judgement visibility,
+blind-report redaction, dataset identity checks, deterministic confidence intervals, paired deltas,
+stronger manifest secret rejection, and correct median/p95 behavior. Production `brain_twin/` was
+not changed by that hardening.
 
-1. first-call + 30 warm repeats/query by default, mathematical median/p95/max, rank-drift telemetry, and best-effort process peak RSS;
-2. explicit `open` vs `held_out` judgement visibility so committed blind-labelled data cannot be mistaken for formal blind evidence; held-out blind reports redact query/slice/failure diagnostics;
-3. canonical dataset hash/split/query-ID checks for ExactScan-vs-ANN oracle comparison;
-4. manifest/run dataset identity checks before reporting;
-5. deterministic 95% bootstrap CIs and paired candidate-minus-baseline query deltas;
-6. broader manifest secret-shape rejection while keeping instruction text hash-only;
-7. corrected even-count latency median and added nearest-rank p95.
+### v1 seed
 
-The committed seed remains intentionally small and synthetic: 36 Memories / 24 queries (15 dev / 9 blind-labelled). Because its judgements are in the repository, its blind-labelled subset is pipeline-test data only, not acceptance-blind data.
+- 36 Memories
+- 24 queries
+- 15 dev / 9 blind-labelled
+- committed/open judgements
+- pipeline/regression seed only
 
-PA1 documentation: `docs/JAPANESE_RETRIEVAL_EVALUATION.md`.
+### v2 open benchmark
 
-### Still required before choosing a production embedding profile
+The user explicitly authorized continued progress on 2026-08-29.
 
-- expand to roughly 300–500 Memories / 120 queries;
-- create a genuinely held-out blind set outside the tuning workspace;
+The next PA1 data round expands the open benchmark to:
+
+- **360 synthetic Memories**
+- **120 queries**
+- **80 dev / 40 blind-labelled**
+- 30 broad second-brain scenarios
+- 300 same-domain/same-entity distractor Memories
+- 10 explicit no-answer hard-negative queries
+- long-Memory, spelling/transliteration, mixed-language, short-query, semantic and lexical slices
+
+Files:
+
+- `brain_twin_eval/open_gold_v2.py`
+- `scripts/generate_japanese_retrieval_v2.py`
+- `tests/test_japanese_retrieval_gold_v2.py`
+- `docs/JAPANESE_RETRIEVAL_EVALUATION.md`
+- `docs/PA1_OPEN_GOLD_V2.md`
+
+The v2 dataset is generated deterministically from committed synthetic source and materialized under
+`.evaluation-results/` when needed. It is public/open by design. Its `blind` labels are **not**
+formal held-out evidence.
+
+## Still required before choosing a production embedding/reranker profile
+
+- genuinely held-out blind set outside the tuning workspace;
 - two-judge calibration/adjudication;
 - tokenizer-aware near-512 / 2k / 8k cases;
-- predeclare Windows CPU/RAM/latency acceptance budgets;
-- run pinned Qwen/BGE-M3/E5/Nomic/GTE/MiniLM candidates and required Qwen instruction/dimension comparisons;
-- evaluate Qwen3-Reranker-0.6B off/on on the same frozen candidate pool, including quality delta and Windows latency/RAM.
+- predeclared Windows CPU/RAM/latency acceptance budgets;
+- pinned Qwen/BGE-M3/E5/Nomic/GTE/MiniLM candidate runs;
+- Qwen English/Japanese/no-instruction comparison;
+- allowed-dimension comparison;
+- Qwen3-Reranker-0.6B OFF/ON comparison on the same frozen candidate pool.
 
-No production embedding or reranker model has been downloaded or evaluated yet.
+No production embedding or reranker model has yet been downloaded/evaluated by this repository work.
 
 ## Last known good production retrieval core
 
-- implementation commit: `68ac6e420332bf87feecb47eb32b67cd84bd4016`
-- Windows tests: `321 passed, 1 skipped` (expected POSIX-only resource skip)
-- exact-SHA Actions run: `33033340980`, **success**
+- implementation: `68ac6e420332bf87feecb47eb32b67cd84bd4016`
+- Windows tests: `321 passed, 1 skipped`
+- exact-SHA Actions: `33033340980`, success
 - Sprint 4D / Phase 4 Vector Retrieval Core: **GO / COMPLETE**
 
 ## Next authorized action
 
-**Independent external review of PA1 hardening.** Stop here. Do **not** begin PA2, PA3, PA4, production reranker integration, organizer-LLM integration, `ask`, Contradiction Detection, Memory Consolidation, smartphone integration, or Phase 5 without explicit authorization.
+Continue PA1 evidence preparation and candidate-evaluation scaffolding under the target architecture.
+It is authorized to prepare/open-evaluate candidate embeddings and reranker experiments while
+preserving local/offline and reproducibility requirements.
+
+Do **not** silently declare Production Vector Search active. Production provider/backend/reranker
+integration, PA3 FAISS production lifecycle, organizer-LLM integration, `ask`, Contradiction
+Detection, Memory Consolidation, smartphone integration, and Phase 5 still require their own
+evidence/review boundary.
 
 ## Core invariants
 
-- Markdown/Vault is the persistent Memory SOT.
-- Raw captured text remains preserved; AI-derived organization cannot destructively replace it.
+- Markdown/Vault is persistent Memory SOT.
+- Raw captured text is preserved; AI-derived organization cannot destructively replace it.
 - SQLite is rebuildable index/cache; canonical embedding BLOBs remain derived canonical cache.
-- Vector/ANN sidecars remain disposable and rebuildable from canonical BLOBs.
-- Organizer LLM, embedding provider, reranker, and ANN backend remain independently replaceable.
+- Vector/ANN sidecars are disposable and rebuildable from canonical BLOBs.
+- Organizer LLM, embedding provider, reranker, and ANN backend are independently replaceable.
 - Normal `reindex` remains provider/network-free.
 - Tests/evaluation fixtures never touch a real user Vault.
 - Production code must not depend on `brain_twin_eval`.
-- Keep responsibilities separated and handoffs recorded in repository documentation.
+- Keep responsibilities separated and handoffs recorded.

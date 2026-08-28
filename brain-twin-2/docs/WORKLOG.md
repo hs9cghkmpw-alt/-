@@ -1,12 +1,282 @@
 # Brain Twin 2 — Work Log
 
-See Git history and `docs/CURRENT_STATE.md` for current status.
+This is the chronological handoff log shared by Claude Code, Codex, ChatGPT reviewers, and humans.
 
-## 2026-08-29 — ChatGPT — PA1 open benchmark expansion
+Rules:
+
+- Append new entries at the end.
+- Keep entries concise and factual.
+- Do not paste full terminal transcripts.
+- Do not store secrets, tokens, passwords, OAuth codes, `.env` contents, or unnecessary sensitive personal data.
+- `CURRENT_STATE.md` is the current snapshot; this file is the history.
+
+---
+
+## 2026-08-25 — ChatGPT — Establish shared agent handoff protocol
 
 - Branch: `brain-twin-dev`
-- Base: `cac8e44a7cb8c08578d74c17601580c27861a2ac`
-- Scope: continue PA1 evidence preparation after explicit user authorization; no production provider/backend/reranker integration.
-- Changed: added deterministic `brain_twin_eval.open_gold_v2` generator for 360 synthetic Memories / 120 queries (80 dev / 40 blind-labelled), generation script, contract tests, and updated PA1 docs/current state. The public `blind` labels remain pipeline-only and are not formal held-out evidence.
-- Known issues: formal held-out blind set, two-judge adjudication, tokenizer-aware 512/2k/8k cases, Windows budgets, real candidate model runs, and Qwen reranker OFF/ON measurements remain pending.
-- Next: exact-SHA CI review, then candidate-evaluation scaffolding and real local model runs when an appropriate machine/runtime is available.
+- Base: `bfc679d8c13d549a637319af672a118d271f2f79`
+- Scope: Establish a repository-based handoff protocol so Claude Code, Codex, ChatGPT, and humans read the same project state before work and leave the next agent a durable record afterward.
+- Changed:
+  - added repository-root `AGENTS.md` as the agent-neutral operating agreement
+  - added repository-root `CLAUDE.md` as the Claude Code entry point that delegates to `AGENTS.md`
+  - added `brain-twin-2/docs/CURRENT_STATE.md` as the compact current-phase/blocker/next-step snapshot
+  - added this `brain-twin-2/docs/WORKLOG.md` as the chronological handoff log
+  - formalized startup, single-writer, maintainability, security, completion, CI, and review rules
+- Application code: unchanged
+- Last verified tests before this documentation-only handoff commit: `117 passed`
+- Last verified CI before this documentation-only handoff commit: GitHub Actions run `32797928602`, `success`
+- Commit: this handoff/bootstrap commit (see Git history)
+- Known issues: Phase 3 Retrieval still has two review hardening items documented in `CURRENT_STATE.md`: persisted link strength and lightweight Related-candidate retrieval before full body loading.
+- Next: complete those two Phase 3 hardening fixes; do not start Vector Search yet.
+
+## 2026-08-25 — Codex — Phase 3 Retrieval hardening
+
+- Branch: `brain-twin-dev`
+- Base: `bfc679d8c13d549a637319af672a118d271f2f79`（共有handoff commit `31dbc3e` をrebaseで保持）
+- Scope: Link生成時strengthの永続化・復元・ranking利用と、大量Related候補の本文遅延取得。
+- Changed: Markdown/SQLiteへ実strengthを保存し、legacyは一律`0.25`で非破壊移行。軽量candidateをrank/dedupeしてからtop N詳細だけ取得。
+- Tests: local `123 passed`; CLI process/search --related/reindex再検索とstrength完全一致を確認。
+- CI: GitHub Actions run `32801919294`, `success`。
+- Commit: this commit
+- Known issues: Vector Search等の後続Phaseは未実装。
+- Next: CIとレビューでPhase 3完了確認後、別タスクでVector Search。
+
+## 2026-08-25 — Codex — Vector Search design
+
+- Branch: `brain-twin-dev`
+- Base: `7a66260cb2319c6d7a9d4229590b506c0171d94b`
+- Scope: Vector Searchの設計レビュー文書作成のみ。アプリケーション実装は行わない。
+- Changed: `docs/VECTOR_SEARCH_DESIGN.md`を追加し、provider/backend分離、再構築可能cache、hybrid ranking、reindex、migration、Windows/offline経路、Sprint案を記録。
+- Tests: application code unchanged; documentation diff checks only.
+- CI: push後に確認予定。
+- Commit: this commit
+- Known issues: 設計文書の未解決事項はレビュー待ち。
+- Next: **Vector Search design review pending**。
+
+## 2026-08-25 — Codex — Vector Search design review fixes
+
+- Branch: `brain-twin-dev`
+- Base: `ceaf20db895554c8b223829a5f2ebca1b0651529`
+- Scope: Vector Search設計の4レビュー指摘のみ修正。アプリケーション実装・sqlite-vec導入は行わない。
+- Changed: user configをEmbedding構成の正本にし、profile/backend schemaを分離。revision非公開時のprofile_epochを必須化し、Hybridをpure lexical/vector → RRF → metadata 1回に明確化。
+- Tests: application code unchanged; documentation diff checks only.
+- CI: push後に確認予定。
+- Commit: this commit
+- Known issues: 外部設計レビュー待ち。GO/完了判断は未実施。
+- Next: **Vector Search design review fixes implemented; external review pending**。
+
+## 2026-08-25 — Codex — Vector Search Sprint 4A
+
+- Branch: `brain-twin-dev`
+- Base: `205f3c384bc4db65bb9199aad7a2a020de1765bd`
+- Scope: provider/profile/backend contracts、canonical document/float32 cache、SQLite schema migration、ExactScan reference backend、Windows sqlite-vec spike。
+- Changed: provider SDK非依存contractとtyped errors、backend非依存fingerprint、canonical document/hash/BLOB validation、4 embedding tables、active vectorだけのexact cosine searchを追加。
+- Spike: Windows AMD64 / Python 3.12.10 / SQLite 3.49.1 / sqlite-vec 0.1.9でload/vec0/float32/cosine KNN/delete+insert/delete/rebuildをPASS。core requirementsには未追加。
+- Tests: 既存123件を維持し、Sprint 4A contract/storage tests 40件を追加。local `163 passed`。
+- CI: push後に確認予定。
+- Known issues: production provider、SqliteVecBackend本番adapter、sync/invalidation、Vector/Hybrid Searchは未実装。
+- Next: **Sprint 4A implemented; external review pending**。Sprint 4BへはレビューGO前に進まない。
+
+## 2026-08-25 — Codex — Vector Search Sprint 4A final hardening
+
+- Branch: `brain-twin-dev`
+- Base: `c12d01981190edf7cbe01f58377b051d6dd87c2b`
+- Scope: plaintext credential key検出強化とVectorIndexBackend mutation lifecycle明確化のみ。
+- Changed: separator/camelCaseをtoken化してnested/unknown fieldのcredential名を拒否。Backend APIを`sync_upsert` / `sync_delete` / `clear_index`へ変更し、canonical cacheを変更しない派生index操作として明文化。
+- Tests: 既存163件を維持し、hardening cases 17件を追加。local `180 passed`。
+- CI: push後に確認予定。
+- Commit: this commit。
+- Known issues: production provider、SqliteVecBackend、embedding orchestration、Vector/Hybrid Searchは未実装。
+- Next: **Sprint 4A hardening implemented; external review pending**。Sprint 4Bへは進めない。
+
+## 2026-08-25 — Codex — Vector Search Sprint 4B
+
+- Branch: `brain-twin-dev`
+- Base: `368f0684f0eff0b1e739e676c445e1a848f53a05`
+- Scope: rebuildable embedding cache orchestration、resume/profile switch、管理CLI。Vector/Hybrid Searchは対象外。
+- Changed: keyset repository、中央batch/retry policy、missing/stale sync、commit単位partial progress、build成功後active切替、backend-only rebuild、`embeddings status/sync/rebuild`を追加。credential検出へcompact API/private keyを追加。
+- Tests: 既存180件を維持し、Sprint 4B cases 40件を追加。local `220 passed`。
+- CI: push後に確認予定。
+- Commit: this commit。
+- Known issues: production providerとSqliteVecBackendは未実装。Primary Vector/Hybrid SearchはSprint 4C以降。
+- Next: **Sprint 4B implemented; external review pending**。Sprint 4Cへは進めない。
+
+## 2026-08-25 — Codex — Vector Search Sprint 4B final hardening
+
+- Branch: `brain-twin-dev`
+- Base: `1978228a1a62d12c606343915476e9d94c1756ac`
+- Scope: staging profileのactive index隔離とstale embedding検索除外のみ。
+- Changed: active/backend ready判定をrepositoryへ集約し、stagingはcanonical-only、同一active+readyだけincremental同期。title/content update triggerでcacheをinvalid化し、ExactScanはvalid rowのみをtop-K前に取得。
+- Tests: 既存220件を維持し、hardening cases 12件を追加。local `232 passed`。
+- CI: push後に確認予定。
+- Commit: this commit。
+- Known issues: SqliteVecBackend/production provider/Vector・Hybrid Searchは未実装。
+- Next: **Sprint 4B hardening implemented; external review pending**。Sprint 4Cへは進めない。
+
+## 2026-08-25 — Claude Code — Sprint 4C vector + hybrid primary retrieval
+
+- Branch: `brain-twin-dev`
+- Base: `87f787d32c0838d5e30a9e424b6bb98bddeca7d0`
+- Scope: ユーザーの明示指示（Sprint 4B external review GO / COMPLETE、Sprint 4Cの着手許可）に基づき着手。Sprint 4Cとして pure lexical candidate API、Vector Primary Search、Hybrid Primary Search (weighted RRF)、metadata multiplier共通化、top N後だけのdetail取得、diagnostic component scores、CLI opt-in (`--vector`/`--hybrid`) を実装。Associative Retrievalとの統合(Sprint 4D)、SqliteVecBackend本番adapter、production embedding providerは対象外のまま。
+- Also fixed (identified in the same instruction, ahead of Sprint 4C proper): a consistency race in `EmbeddingService.sync()` where a Memory title/content change during the (potentially slow) provider call could let a stale vector be written as `is_valid=1`. Fixed by re-verifying `content_hash` against a fresh Memory read in a short transaction immediately before the write (skip, don't raise, on mismatch — reprocessed by the next sync), and by re-checking `ready == total_active` immediately before staging activation instead of trusting the loop's own bookkeeping.
+- Changed:
+  - `brain_twin/embedding_service.py`, `brain_twin/embedding_repository.py` (`memories_by_ids`), `brain_twin/embedding_provider.py` (`VectorSearchUnavailableError`): consistency-race hardening.
+  - `brain_twin/db.py`: `search_lexical_candidates` (pure BM25, no metadata), `memory_ranking_signals_by_ids` (lightweight importance/confidence/event_date for the full Hybrid candidate union), `memory_result_details_by_ids` (full display detail, fetched only for the final top N).
+  - `brain_twin/retrieval_weights.py` (new): `metadata_multiplier`/`recency_weight`/`RetrievalWeights`/`MIN_QUERY_LENGTH`, shared by `search.py` and `hybrid_search.py` so the formula exists in exactly one place and is applied exactly once.
+  - `brain_twin/search.py`: refactored onto `retrieval_weights.py` with an injectable `now` for characterization testing; public behavior (score formula, order, limit, short-query, no embedding-config dependency) is unchanged and pinned by `tests/test_search.py`.
+  - `brain_twin/vector_search.py` (new): availability gate (active profile + backend id/schema/indexed-profile/ready all match), query embedding validation, `vector_search()` with lazy top-K detail fetch.
+  - `brain_twin/hybrid_search.py` (new): pure lexical + pure vector candidate union, Weighted Reciprocal Rank Fusion, metadata multiplier applied once after fusion, deterministic tie-break (final_score desc, best channel rank asc, event_date desc, memory_id asc), lazy top-N detail fetch.
+  - `brain_twin/cli.py`: `search --vector` / `search --hybrid` (mutually exclusive via argparse), explicit rejection of `--related` combined with either, capability-unavailable surfaces as a clear `[NG]` error (no silent lexical fallback), `--verbose` diagnostic component scores. Plain `search` is unchanged.
+  - `AGENTS.md`: added Section 2 "Authority and stale handoff documents" (explicit user GO/COMPLETE/authorization outranks a stale `CURRENT_STATE.md`/`WORKLOG.md` status, with explicit exceptions for ambiguity/scope mismatch/destructive ops/failing CI/safety conflicts/uncertain authorization); subsequent sections renumbered 3–10. `CLAUDE.md` now references this rule.
+- Tests: existing 232 kept unchanged; 66 new (race-condition, lexical candidate, search characterization, Vector, Hybrid, CLI). Local `298 passed`.
+- CI: verified against the pushed commit SHA specifically (not just "latest run on branch"); see commit line below.
+- Commit: this commit.
+- Known issues: `SqliteVecBackend` production adapter and a real embedding provider are still not implemented (`ExactScanBackend` + fake/recording providers only); `--vector`/`--hybrid` therefore return a clear "provider is not installed"-style error outside tests until a production provider lands. `--related` cannot yet be combined with `--vector`/`--hybrid` (planned for Sprint 4D). The Sprint 4C implementation itself is unreviewed.
+- Next: **Sprint 4C (vector + hybrid primary retrieval) implemented; external review pending.** Do not begin Sprint 4D until this is reviewed and explicitly approved.
+
+## 2026-08-25 — Claude Code — Sprint 4C final hardening
+
+- Branch: `brain-twin-dev`
+- Base: `063c3a60beb30a7d6cc7f2191ea780869f177d7f`
+- Scope: user-instructed hardening on top of a Sprint 4C implementation that was reviewed and approved on architecture (Vector Search / Hybrid RRF / lazy detail fetch / availability gate / CLI / handoff protocol). Three fixes only; no Sprint 4D scope.
+- Changed:
+  1. **Fully atomic embedding consistency race close** (`brain_twin/embedding_service.py`): the prior round's fix re-read current Memory content right before writing `is_valid=1`, but that re-read was a plain `SELECT` — it did not itself hold the write lock, leaving a narrower race window between the re-read and the write where a second writer could still commit a change. Each commit-chunk write now issues `BEGIN IMMEDIATE` *before* the re-verification read (guarded against a redundant `BEGIN` if already mid-transaction), so canonical cache write + backend `sync_upsert` run inside one held write lock with no gap. The provider call itself remains outside any transaction. Any exception rolls back the whole chunk; the item is reprocessed by the next `sync()`.
+  2. **Deterministic lexical tie-break for Hybrid** (`brain_twin/db.py`): `search_lexical_candidates()` (Hybrid-only pure-BM25 API) now orders `ORDER BY score ASC, m.id ASC` instead of `ORDER BY score` alone, so tied `bm25()` scores no longer leave `lexical_rank` (and therefore RRF fusion / best-channel tie-break) non-deterministic. `db.search()` / `search.search()` (plain-search backward-compat path) are unchanged.
+  3. **Exact-SHA CI verification in `AGENTS.md`** (Section 7): replaced the "latest run on branch" `gh run list --limit 1` example with a loop that polls for the run whose `headSha` matches `git rev-parse HEAD`, and requires confirming that match before citing the run as evidence of CI success/failure.
+- Tests: existing 298 kept unchanged; 8 new (`test_embedding_service.py`: write-transaction-held contract test, a genuine second-connection lock-conflict test with `timeout=0` — no sleep/threads, hash-mismatch-skips-`sync_upsert`, canonical-write+backend-sync share one transaction, exception-rolls-back-canonical-write; `test_search.py`: lexical tie-break by `memory_id` ascending, stability across repeated calls, stability across `reindex`). Local `306 passed`.
+- CI: verified against the pushed commit SHA specifically (`headSha` match required before reporting); see commit line below.
+- Commit: this commit.
+- Known issues: same as the prior entry — `SqliteVecBackend` production adapter and a real embedding provider are still not implemented; `--related` still cannot combine with `--vector`/`--hybrid` (Sprint 4D). This hardening round itself is unreviewed.
+- Next: **Sprint 4C final hardening implemented; external review pending.** Do not begin Sprint 4D until this is reviewed and explicitly approved.
+
+## 2026-08-25 — Claude Code — Sprint 4D: connect Hybrid/Vector Primary to Associative Retrieval
+
+- Branch: `brain-twin-dev`
+- Base: `cf28b4629c51245ff0ec880b58da97951f465b12`
+- Scope: user-instructed authorization to begin Sprint 4D, with explicit confirmation that Sprint 4C final hardening's external review is approved. Implemented only the "connect Hybrid Primary to the existing 1-hop expansion" item of Sprint 4D; the 10k-scale Windows benchmark and failure/recovery/migration validation were not attempted (this session runs in a Linux remote execution environment, not the actual Windows dev machine), so design-value tuning and the Vector Search completion review submission have not started either.
+- Changed:
+  1. `brain_twin/retrieval.py`: extracted the 1-hop expansion previously inlined in `retrieve()` into `retrieve_from_primary(conn, primary, *, related_limit=...)`. It only requires each `primary` item to expose `memory_id` (a `Protocol`/`TypeVar`-bound generic, not a concrete dependency on `search.ScoredResult`), so it works unchanged for `search.ScoredResult`, `vector_search.VectorResult`, and `hybrid_search.HybridResult`. `retrieve()` now just calls `search.search()` then delegates to `retrieve_from_primary()`; its behavior/output is unchanged.
+  2. `brain_twin/cli.py`: removed the explicit "not supported" rejection for `--related` combined with `--vector`/`--hybrid`. `_cmd_search` now calls `retrieval.retrieve_from_primary()` with the Vector/Hybrid primary results when `--related` is set, and prints the related section via a shared `_print_related()` helper (extracted from the previously inlined plain-`--related` printing code, output format unchanged). Added a `ValueError` handler in the vector/hybrid branch (negative `--related-limit`) to match the existing plain-search branch's error handling.
+  3. Docs (`README.md`, `docs/VECTOR_SEARCH_DESIGN.md`, `docs/CURRENT_STATE.md`): recorded the associative integration as implemented and the remaining Sprint 4D items (Windows benchmark, failure/recovery/migration test, design tuning, review submission) as not yet done, with the reason (no Windows machine in this remote environment).
+- Tests: existing 306 kept unchanged (2 obsolete rejection tests in `tests/test_search_cli.py` replaced, not merely deleted, by 4 new integration tests). New: `tests/test_retrieval.py` (`retrieve_from_primary` works with a non-`ScoredResult` primary type; `retrieve()` and `retrieve_from_primary()` produce identical `related` output for the same primary list); `tests/test_search_cli.py` (`--vector --related` and `--hybrid --related` show the related section; the related section is correctly omitted when there are no links; a negative `--related-limit` in the vector/hybrid path is a clear `[NG]` error, not an uncaught exception). Local `310 passed`.
+- CI: verified against the pushed commit SHA specifically (`headSha` match required before reporting); see commit line below.
+- Commit: this commit.
+- Known issues: `SqliteVecBackend` production adapter and a real embedding provider are still not implemented. The 10k-scale Windows benchmark and failure/recovery/migration validation portions of Sprint 4D have not been done in this session (Linux remote environment, not the Windows dev machine) — they still need to run on the actual Windows machine before Sprint 4D can be considered complete. This round's implementation itself is unreviewed.
+- Next: **Sprint 4D associative integration implemented; external review pending.** The remaining Sprint 4D items (Windows benchmark, failure/recovery/migration validation, design tuning, Vector Search completion review submission) require the real Windows dev machine and have not been attempted. Do not begin further scope until this is reviewed and explicitly approved.
+
+## 2026-08-25 — Claude Code — Sprint 4D final validation: benchmark, recovery, CLI hardening
+
+- Branch: `brain-twin-dev`
+- Base: `d8e46d5779e118dc93f9dbf835a0968ba5182edc`
+- Scope: user-instructed Sprint 4D final validation, following external review GO for Sprint 4C final hardening and for Sprint 4D associative integration. Covers: (0) CLI hardening for negative `--related-limit`, (1-5) Windows benchmark, (6) failure/recovery validation, (7) full SQLite-delete recovery, (8) legacy migration validation, (9) corruption/malformed-cache validation, (10) production-completion wording, (11) new validation docs. Sprint 4D itself remains **not** externally reviewed/GO'd as a whole; this round does not self-declare Sprint 4D COMPLETE/GO. The task explicitly required this benchmark be run "on the Windows machine" and Windows environment info recorded; this session has no Windows machine (Linux remote execution container), so — per explicit user confirmation mid-task — the benchmark and machine-info recording were run on this Linux environment instead, clearly labeled throughout as a substitute, not the official Windows result.
+- Changed:
+  1. `brain_twin/cli.py`: `_cmd_search` now validates `args.related and args.related_limit < 0` before any embedding config/provider/vector work starts, for plain/`--vector`/`--hybrid` alike — a negative `--related-limit` now fails fast with a clear `[NG]` error, no provider or vector/hybrid search call, and nothing printed to stdout (previously the vector/hybrid paths ran the full search and printed Primary results before the validation error).
+  2. `scripts/vector_benchmark.py` (new): reproducible `ExactScanBackend` reference/fallback benchmark. Offline deterministic synthetic provider (seeded SHA-256-derived vectors, no network/model download), synthetic dataset generator (deterministic id/title/content/event_date/importance/confidence/topics/links), phases A (dataset prep) / B (embedding cache population) / C (first backend build, isolated via a `build()`-timing `ExactScanBackend` subclass so it need not be measured with a second redundant build) / D-G (lexical/vector/hybrid/hybrid+related query latency, each cold + 20 warm repeats with median/p95/min/max) / H (backend-only rebuild) / I (DB file size). Never touches a real Vault (isolated `tempfile.TemporaryDirectory()`); not part of the pytest suite (explicit-run only). Ran at 1k/384, 10k/384, 10k/768; results and machine info recorded in `docs/VECTOR_WINDOWS_BENCHMARK.md`.
+  3. `tests/test_recovery_validation.py` (new): end-to-end integration tests for (a) backend index/bookkeeping loss → `VectorSearchUnavailableError` → `rebuild_backend()` (provider never called) → Vector Search recovered; (b) a stale Memory (title/content changed) correctly excluded from Vector-only search while still reachable through Hybrid's lexical channel, restored to Vector after the next `sync()`; (c) full SQLite-file deletion → `pipeline.reindex()` → confirm Markdown/Raw Log byte-identical, lexical search and Associative Retrieval's related-Memory+strength fully restored from Markdown alone, Vector Search correctly unavailable immediately after rebuild → embedding resync → Vector Search, Hybrid Search, and Hybrid+Related 1-hop all working again.
+  4. `tests/test_legacy_migration_combined.py` (new): one legacy-DB fixture combining every self-heal gap at once (`links` missing `reason`+`strength`, `memory_entities` missing `confidence`+`method`, `memory_embeddings` missing `is_valid`, `embedding_profiles`/`active_embedding_state`/`vector_backend_state` entirely absent, plus an unrelated table) — confirms the unrelated table survives, all missing tables/columns are created, the legacy embedding row self-heals to `is_valid=0` (safe side), the legacy link's `strength` restores to the conservative fallback, `memories_fts` stays queryable, and a subsequent `reindex()` still completes cleanly.
+  5. Docs (new): `docs/VECTOR_WINDOWS_BENCHMARK.md` (methodology, machine environment — explicitly labeled Linux-substitute — dataset, phase/query measurements at 1k/384, 10k/384, 10k/768, interpretation, an observed (not hard-coded) recommended `ExactScanBackend` operating range, known limitations); `docs/VECTOR_RECOVERY_VALIDATION.md` (items 6-9 results, citing both new end-to-end tests and pre-existing focused unit tests that already covered most individual mechanics — provider partial-failure resume, profile-switch-failure preservation, inactive/delete exclusion, and malformed/corrupted-cache rejection were all already covered before this round and are cited rather than duplicated).
+  6. Docs (updated): `README.md` and `docs/VECTOR_SEARCH_DESIGN.md` Sprint 4D sections rewritten to "all planned validation implemented; external review pending" with the production-completion wording the task required (Phase 4 Vector Retrieval Core: validated/complete pending external review; Production activation: pending; remaining production dependencies listed explicitly — production embedding provider, production-scale vector backend decision, Japanese retrieval quality evaluation). `docs/VECTOR_SEARCH_DESIGN.md`'s open item 5 (ExactScanBackend item-count threshold) updated with the observed benchmark values and an explicit note that no hard-coded threshold was implemented from a single benchmark run. `docs/CURRENT_STATE.md` updated to "Sprint 4D: all planned validation implemented; external review pending" (not self-declared COMPLETE/GO), with the last-known-good commit updated to the Sprint 4D associative-integration commit (`d8e46d5`, CI run `32878425146`, success).
+- Tests: existing 310 kept unchanged. New: 1 CLI hardening test set (`tests/test_search_cli.py`: plain/`--vector`/`--hybrid` all reject a negative `--related-limit` before calling the provider or vector/hybrid search, with nothing printed to stdout) + 3 new tests in `tests/test_recovery_validation.py` + 1 new test in `tests/test_legacy_migration_combined.py`. Local `316 passed`.
+- CI: verified against the pushed commit SHA specifically (`headSha` match required before reporting); see commit line below.
+- Commit: this commit.
+- Known issues: the Windows benchmark and machine-info recording were run on this session's Linux remote execution environment as an explicit, clearly-labeled substitute for the requested Windows machine — a genuine Windows-machine re-run is still outstanding before this can be cited as the official Sprint 4D Windows benchmark. No 100k-scale benchmark data point (not required this round). `ExactScanBackend`'s recommended operating range is an observed recommendation from one machine/one run, not a hard-coded threshold (intentionally deferred to a separate review per the task's instruction). `SqliteVecBackend` production adapter and a real embedding provider are still not implemented. This round's implementation itself, and Sprint 4D as a whole, remain externally unreviewed.
+- Next: **Sprint 4D: all planned validation implemented; external review pending.** Do not begin Sprint 4E-equivalent scope, a production embedding provider, `SqliteVecBackend`, `ask`, Contradiction Detection`, Memory Consolidation`, or smartphone integration until this is reviewed and explicitly approved. A Windows-machine re-run of the benchmark remains an open follow-up but is not treated as a blocker to review.
+
+## 2026-08-26 — Claude Code — Sprint 4D benchmark final hardening
+
+- Branch: `brain-twin-dev`
+- Base: `7b83e56f113630381a594e84898257ce3b1f946d`
+- Scope: user-instructed benchmark hardening following external review GO for Sprint 4D's associative integration, CLI hardening, and failure/recovery/migration validation. Sprint 4D overall remains not complete (Windows ExactScan benchmark still pending); no Sprint 4E-equivalent scope attempted. This session has no Windows machine, so the code fixes below were implemented and tested here, and the benchmark was re-run on Linux as a substitute only — the Windows official run itself was left pending, per the task's explicit instruction not to estimate/extrapolate/reuse Linux figures in its place.
+- Changed:
+  1. `scripts/vector_benchmark.py` Windows portability fix: the module imported the POSIX-only `resource` module unconditionally at top level, which has no Windows build and would have crashed the script before any benchmark could run there. Now guarded with `try`/`except ImportError` (`resource = None` on failure); new `_peak_rss_kb()` helper returns `None` (with an explanatory `rss_measurement` string in `_machine_info()`'s output) instead of raising when `resource` is unavailable. No optional dependency (e.g. `psutil`) was added, and a missing RSS reading never fails the benchmark run itself.
+  2. `scripts/vector_benchmark.py` corrected end-to-end metric: the original `G_hybrid_plus_related` value computed the Hybrid Primary result once, *outside* the timed loop, and only timed `retrieval.retrieve_from_primary()` on that already-computed result — i.e. related-expansion overhead only, not genuine `search --hybrid --related` end-to-end latency. Kept (renamed `G_related_expansion_only`, still a valid metric on its own) and added a new `H_hybrid_plus_related_end_to_end` that calls `hybrid_search.hybrid_search()` **and** `retrieval.retrieve_from_primary()` together inside the same timed callable on every cold/warm sample.
+  3. `scripts/vector_benchmark.py` valid synthetic dates: `event_date` generation used hand-rolled month/day arithmetic (`1 + (day_offset % 365) // 31`, `1 + (day_offset % 31)`) that can produce invalid calendar dates (e.g. `2016-02-30`). Replaced with `_BENCHMARK_BASE_DATE + timedelta(days=day_offset)`, which always yields a valid, deterministic date for a given seed/count.
+  4. `tests/test_vector_benchmark.py` (new): lightweight tests for the portable parts of the benchmark script — `_machine_info()` degrades gracefully (no exception) when `resource` is unavailable and reports RSS correctly when it is; generated `event_date` values are always valid calendar dates (`datetime.date.fromisoformat` must not raise) and deterministic across separate runs with the same seed; `G_related_expansion_only` vs `H_hybrid_plus_related_end_to_end` are structurally distinct (verified by counting real `hybrid_search()` calls — G calls it once, H calls it `1 + warm_repeats` times, proving H genuinely re-runs Hybrid on every sample rather than reusing a precomputed result); a small-count (`count=30`) smoke run of `run_benchmark()` completes and reports all expected keys. The 10k-scale benchmark itself stays out of the pytest suite.
+  5. Re-ran the Linux reference benchmark (1k/384, 10k/384, 10k/768) with the fixed script — a genuine re-measurement, not a recalculation of the original numbers. Added as a "Corrected Linux reference run" section in `docs/VECTOR_WINDOWS_BENCHMARK.md`, confirming `H ≈ F + G` at each configuration (e.g. 10k/384: F=0.677s + G=0.065s ≈ 0.742s, matching H=0.743s). The original run's tables are kept (not deleted), with their `G` column explicitly relabeled as "related expansion only (mislabeled at the time)". A "Windows official run" section was added as an explicit placeholder — pending, not filled with estimated/extrapolated/reused Linux numbers.
+  6. Docs (`docs/CURRENT_STATE.md`, `README.md`, `docs/VECTOR_SEARCH_DESIGN.md`): replaced "all planned validation implemented" wording with an explicit per-item breakdown (associative integration: reviewed GO; CLI hardening: reviewed GO; failure/recovery/migration validation: reviewed GO; Linux substitute ExactScan benchmark: completed; Windows ExactScan benchmark: pending; Sprint 4D overall: not complete). No self-declared "Sprint 4D COMPLETE" or "Phase 4 Vector Retrieval Core COMPLETE" wording anywhere.
+- Tests: existing 316 kept unchanged. New: 6 in `tests/test_vector_benchmark.py`. Local `322 passed`.
+- CI: verified against the pushed commit SHA specifically (`headSha` match required before reporting); see commit line below.
+- Commit: this commit.
+- Known issues: the Windows ExactScan benchmark itself has still not been run — this session has no Windows machine, so `docs/VECTOR_WINDOWS_BENCHMARK.md`'s "Windows official run" section remains an explicit placeholder. Sprint 4D therefore remains not complete despite associative integration/CLI hardening/failure-recovery-migration validation each already having external review GO. No 100k-scale benchmark data point. `SqliteVecBackend` production adapter and a real embedding provider are still not implemented.
+- Next: **Sprint 4D: implemented and validated; external review pending. Sprint 4D overall is not complete — the Windows ExactScan benchmark is still pending.** When a session with access to the actual Windows development machine picks this up, it should run `scripts/vector_benchmark.py` (now portable) at 1k/384, 10k/384, and 10k/768, and record results in `docs/VECTOR_WINDOWS_BENCHMARK.md`'s "Windows official run" section. Do not begin Sprint 4E-equivalent scope, a production embedding provider, `SqliteVecBackend`, `ask`, Contradiction Detection, Memory Consolidation, or smartphone integration until Sprint 4D is complete and reviewed.
+
+## 2026-08-26 — Claude Code — Sprint 4D Windows official benchmark (attempted; environment mismatch)
+
+- Branch: `brain-twin-dev`
+- Base: `7b7f9d0ef2d5150227dea24a6b2fc1db2186c1a1`
+- Scope: user-instructed attempt to run Sprint 4D's official Windows ExactScan benchmark, following external review GO for the benchmark harness final hardening. External review confirmed Sprint 4D's sole remaining blocker is the Windows official benchmark itself. Instruction required confirming `platform.system() == "Windows"` before proceeding with the benchmark; this session's environment is Linux (confirmed via `platform.system()` and `uname -a`), not the required Windows machine, so the Windows smoke test, official benchmark, and evaluation (task items 3-5) were not attempted, and no Windows numbers were estimated, extrapolated, or substituted from the existing Linux figures. Only the two platform-independent items in the instruction (a small test fix, and syncing `CURRENT_STATE.md` to the current external-review results) were completed.
+- Changed:
+  1. `tests/test_vector_benchmark.py::test_generated_event_dates_are_deterministic_across_runs`: fixed a bug where the test compared `row[0]` from `SELECT id, event_date FROM memories`, i.e. compared `id` (trivially deterministic by construction, regardless of date generation) instead of `event_date`. Now selects `event_date` only, so the test actually exercises date-generation determinism across separate runs with the same seed.
+  2. `docs/CURRENT_STATE.md`: synced Sprint 4C final hardening's status from "external review pending" to "reviewed GO / COMPLETE"; added Sprint 4D's benchmark-harness-final-hardening GO; updated "Last known good implementation" to this session's actual last-pushed/CI-verified commit (`7b7f9d0`, run `33011147727`, success, 322 tests); recorded this round's outcome as a new numbered item (attempted Windows benchmark, blocked by environment, no Windows values fabricated). Sprint 4D is still described as "implemented and validated; external review pending" and "not complete" — not self-declared GO.
+- Tests: existing 322 kept unchanged in count (one test's assertion corrected, no tests added/removed). Local `322 passed`.
+- CI: verified against the pushed commit SHA specifically (`headSha` match required before reporting); see commit line below.
+- Commit: this commit.
+- Known issues: the Windows official ExactScan benchmark has still not been run anywhere — this is Sprint 4D's sole remaining blocker per external review, and it requires a session with an actual Windows machine. `docs/VECTOR_WINDOWS_BENCHMARK.md`'s "Windows official run" section remains an unfilled placeholder (correctly left that way). `SqliteVecBackend` production adapter and a real embedding provider are still not implemented.
+- Next: **Sprint 4D: implemented and validated; external review pending. Sprint 4D overall is not complete — the Windows official ExactScan benchmark is still pending.** A session running on the actual Windows development machine should run `scripts/vector_benchmark.py` (already portable) at 1k/384, 10k/384, and 10k/768 with `--warm-repeats 20`, and record environment + phase/query results in `docs/VECTOR_WINDOWS_BENCHMARK.md`'s "Windows official run" section, in its own table separate from the Linux figures. Do not begin Sprint 4E-equivalent scope, a production embedding provider, `SqliteVecBackend`, `ask`, Contradiction Detection, Memory Consolidation, or smartphone integration until Sprint 4D is complete and reviewed.
+
+## 2026-08-27 — Codex — Sprint 4D and Phase 4 closeout
+
+- Branch: `brain-twin-dev`
+- Base: `8d32acb7ff08aa222a4ddff71ad00a7ad5ca89b4`
+- Scope: record the completed Windows official ExactScan benchmark and close Sprint 4D / Phase 4 Vector Retrieval Core after external review GO; documentation/status only, with no feature implementation.
+- Changed: recorded the Windows 11 AMD64 / Python 3.12.10 / SQLite 3.49.1 environment and full 1k/384, 10k/384, and 10k/768 benchmark tables separately from Linux. Windows ExactScan retrieval was roughly 2–3x slower than the Linux reference at the measured 10k points. About 1k Memories remained interactive; 10k/384 was correct but noticeably slow (Hybrid + Related median ~1.99 s); 10k/768 was unsuitable as an interactive primary backend (median ~4.23 s, p95 ~7.49 s, max ~9.99 s).
+- Recommendation: retain `ExactScanBackend` as reference implementation / fallback / small-Vault backend. Do not hard-code an unmeasured intermediate threshold; production scale needs a separately selected and validated ANN/vector-index backend.
+- Status: external review **GO**; Sprint 4D **COMPLETE**; Phase 4 Vector Retrieval Core **COMPLETE**. Production Vector Search activation remains **PENDING**.
+- Tests: Windows `321 passed, 1 skipped`; skip is expected because the POSIX-only `resource` module is unavailable on Windows. Smoke benchmark **PASS**.
+- CI: GitHub Actions run `33033340980` **success**; `headSha` exactly matched `68ac6e420332bf87feecb47eb32b67cd84bd4016`.
+- Commit: `68ac6e420332bf87feecb47eb32b67cd84bd4016` (closeout implementation/docs); followed by a handoff metadata commit recording this exact-SHA CI result.
+- Known issues: production embedding provider and production-scale vector backend are not implemented/selected; Japanese semantic retrieval quality evaluation is not complete. Raw `.benchmark-results/` JSON remains an uncommitted generated artifact.
+- Next: stop at closeout. Production activation or Phase 5 requires separate explicit authorization.
+
+## 2026-08-27 — Codex — Production Vector Search technical selection
+
+- Branch: `brain-twin-dev`
+- Base: `19c99600807e1e941ab2a5b3e83d7bc3b9737337`
+- Scope: design-only comparison and provisional selection of a local production embedding
+  provider/model, production-scale ANN backend, Japanese retrieval evaluation plan, ADR draft,
+  and implementation Sprint proposal; no code, dependency, schema, or production-config change.
+- Changed: added `docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md` and
+  `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`; compared Qwen3 Embedding, BGE-M3, multilingual E5,
+  Nomic v2, GTE multilingual, MiniLM, and Ollama; compared FAISS, LanceDB, sqlite-vec, hnswlib,
+  Qdrant, USearch, and ExactScan. Proposed pinned Qwen3-Embedding-0.6B + FAISS HNSW subject to
+  Japanese gold evaluation and Windows 1k/10k/100k ANN gates. Synced README/CURRENT_STATE to
+  external-review-pending status.
+- Tests: documentation-only; no test suite run. `git diff --check` required before commit.
+- CI: pending exact-SHA verification after push.
+- Commit: this commit.
+- Known issues: model quality/CPU/RAM is unmeasured on the Brain Twin Japanese gold set; FAISS
+  HNSW parameters, delete/tombstone lifecycle, ANN recall, disk/RSS, and crash-safe replacement
+  remain unmeasured on Windows. The ADR is Proposed, not Accepted.
+- Next: external review. If explicitly approved, begin PA1 Japanese retrieval evaluation harness;
+  do not implement the provider/backend or start Phase 5 from this draft alone.
+
+## 2026-08-27 — Codex — Production Vector Search external-review fixes
+
+- Branch: `brain-twin-dev`
+- Base: `fee05da105785135564eccce8bd1061a90403d45`
+- Scope: docs/design-only fixes requested by external review; no PA1–PA4 implementation, package
+  installation, model download, schema, or production-config change.
+- Changed: made Qwen instruction language an explicit PA1 English/Japanese/no-instruction
+  comparison; required unambiguous physical ANN identity or rebuild-on-update for non-removable
+  FAISS HNSW entries and leakage/dedup/exhaustion gates; corrected FAISS PyPI wheel provenance and
+  added PyPI-versus-upstream-conda/Pixi packaging gate; recorded stable sqlite-vec 0.1.9 exact
+  status and experimental 0.1.10-alpha DiskANN/rescore/IVF work without promoting it.
+- Tests: documentation-only; no local test suite planned. `git diff --check` required.
+- CI: pending exact-SHA verification after push.
+- Commit: this commit.
+- Known issues: exact Qwen instruction/dimension, FAISS packaging path and physical-ID/update
+  strategy, ANN parameters, and numeric Windows budgets remain PA1/PA3 evaluation decisions.
+- Next: external review. Production activation remains PENDING; do not begin PA1 without explicit GO.
+
+## 2026-08-28 — ChatGPT — PA1 Japanese retrieval evaluation harness
+
+- Branch: `brain-twin-dev`
+- Base: `c8012c6311bfac8f8f68fdc5a7790d0eeed0a6ac`
+- Scope: implement only the model/backend-independent PA1 evaluation harness after Production Vector Activation Design external-review GO; no model download, production provider, FAISS/ANN implementation, schema migration, or production activation.
+- Changed: added isolated `brain_twin_eval/` dataset/metric/runner/manifest/report modules plus evaluation-side adapters for existing lexical/Vector/Hybrid APIs; added a synthetic privacy-safe seed gold fixture (36 Memories / 24 queries, 15 dev / 9 blind, required slice coverage), precomputed-ranking CLI, JSON/Markdown reports, ANN-vs-Exact Recall@K contract, secret-resistant experiment manifests, `.evaluation-results/` ignore rule, focused tests, and `docs/JAPANESE_RETRIEVAL_EVALUATION.md`. Production `brain_twin/` does not import the evaluation package.
+- Tests: focused PA1 tests passed locally before GitHub commit; full exact-SHA CI is required after push.
+- CI: pending exact-SHA verification after push.
+- Commit: this commit.
+- Known issues: seed fixture is a contract scaffold, not the final 300–500 Memory / 120-query adjudicated corpus; real Qwen/BGE/E5/Nomic/GTE runs, tokenizer-aware 512/2k/8k cases, judge calibration, and numeric Windows acceptance budgets remain deferred. PA2/PA3 are not started.
+- Next: **PA1 evaluation harness implemented; external review pending.** Do not begin real candidate model benchmarking, PA2, PA3, PA4, or Phase 5 until explicitly authorized after review.
