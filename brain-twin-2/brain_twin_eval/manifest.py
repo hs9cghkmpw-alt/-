@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -20,8 +21,22 @@ _SECRET_KEY_PARTS = (
     "access_token",
     "refresh_token",
     "bearer_token",
+    "private_key",
 )
-_SECRET_VALUE_PREFIXES = ("sk-", "ghp_", "github_pat_", "Bearer ")
+_SECRET_VALUE_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"^sk-\S+$",
+        r"^hf_[A-Za-z0-9]{20,}$",
+        r"^ghp_[A-Za-z0-9]{20,}$",
+        r"^github_pat_[A-Za-z0-9_]{20,}$",
+        r"^glpat-[A-Za-z0-9_-]{16,}$",
+        r"^xox[bp]-[A-Za-z0-9-]{16,}$",
+        r"^Bearer\s+\S+$",
+        r"^(?:AKIA|ASIA)[A-Z0-9]{16}$",
+        r"^AIza[0-9A-Za-z_-]{30,}$",
+    )
+)
 
 
 class ManifestValidationError(ValueError):
@@ -34,6 +49,7 @@ class ExperimentManifest:
     timestamp_utc: str
     dataset_version: str
     dataset_sha256: str
+    dataset_judgement_visibility: str
     git_commit: str
     provider_label: str
     model_name: str
@@ -66,7 +82,7 @@ def _walk_for_secrets(value: Any, path: str = "root") -> None:
             _walk_for_secrets(nested, f"{path}[{index}]")
     elif isinstance(value, str):
         stripped = value.strip()
-        if any(stripped.startswith(prefix) for prefix in _SECRET_VALUE_PREFIXES):
+        if any(pattern.match(stripped) for pattern in _SECRET_VALUE_PATTERNS):
             raise ManifestValidationError(f"secret-like value is not allowed in manifest: {path}")
 
 
@@ -119,6 +135,7 @@ def build_manifest(
         timestamp_utc=timestamp,
         dataset_version=dataset.version,
         dataset_sha256=dataset_sha256(dataset),
+        dataset_judgement_visibility=dataset.judgement_visibility,
         git_commit=git_commit,
         provider_label=provider_label,
         model_name=model_name,

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Mapping, Protocol, Sequence
+from typing import Callable, Mapping, Protocol, Sequence
 
-from .dataset import EvaluationDataset, EvaluationQuery
-from .metrics import QueryMetrics, compute_query_metrics, mean
+from .dataset import EvaluationDataset, EvaluationQuery, dataset_sha256
+from .metrics import QueryMetrics, ann_recall_at_k, compute_query_metrics, mean
+from .resources import PeakRssReading, peak_rss_reading
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class EvaluatedQuery:
     slice_tags: tuple[str, ...]
     ranked_ids: tuple[str, ...]
     latency_seconds: float | None
+    warm_latency_seconds: tuple[float, ...]
+    warm_rank_drift_count: int
     metrics: QueryMetrics
 
 
@@ -42,10 +45,23 @@ class AggregateMetrics:
 @dataclass(frozen=True)
 class EvaluationRun:
     dataset_version: str
+    dataset_sha256: str
+    judgement_visibility: str
     split: str | None
     queries: tuple[EvaluatedQuery, ...]
     overall: AggregateMetrics
     per_slice: Mapping[str, AggregateMetrics]
+    peak_rss_before_bytes: int | None = None
+    peak_rss_after_bytes: int | None = None
+    peak_rss_method: str | None = None
+
+
+@dataclass(frozen=True)
+class AnnRecallSummary:
+    k: int
+    query_count: int
+    mean_recall: float
+    per_query: Mapping[str, float]
 
 
 def _validate_ranked_ids(
@@ -104,6 +120,8 @@ def _build_run(
     evaluated: Sequence[EvaluatedQuery],
     *,
     split: str | None,
+    rss_before: PeakRssReading | None = None,
+    rss_after: PeakRssReading | None = None,
 ) -> EvaluationRun:
     evaluated_tuple = tuple(evaluated)
     slices = sorted({tag for item in evaluated_tuple for tag in item.slice_tags})
@@ -111,12 +129,22 @@ def _build_run(
         tag: _aggregate([item for item in evaluated_tuple if tag in item.slice_tags])
         for tag in slices
     }
+    method = None
+    if rss_after is not None:
+        method = rss_after.method
+    elif rss_before is not None:
+        method = rss_before.method
     return EvaluationRun(
         dataset_version=dataset.version,
+        dataset_sha256=dataset_sha256(dataset),
+        judgement_visibility=dataset.judgement_visibility,
         split=split,
         queries=evaluated_tuple,
         overall=_aggregate(evaluated_tuple),
         per_slice=per_slice,
+        peak_rss_before_bytes=rss_before.bytes if rss_before else None,
+        peak_rss_after_bytes=rss_after.bytes if rss_after else None,
+        peak_rss_method=method,
     )
 
 
@@ -143,10 +171,24 @@ def evaluate_rankings(
                 slice_tags=query.slice_tags,
                 ranked_ids=ranked_ids,
                 latency_seconds=None,
+                warm_latency_seconds=(),
+                warm_rank_drift_count=0,
                 metrics=compute_query_metrics(query, ranked_ids),
             )
         )
     return _build_run(dataset, evaluated, split=split)
+
+
+def _timed_search(
+    retriever: EvaluationRetriever,
+    query: str,
+    k: int,
+    *,
+    clock: Callable[[], float],
+) -> tuple[tuple[RankedResult, ...], float]:
+    started = clock()
+    results = tuple(retriever.search(query, k))
+    return results, clock() - started
 
 
 def evaluate_retriever(
@@ -155,29 +197,101 @@ def evaluate_retriever(
     *,
     split: str | None = None,
     k: int = 10,
+    warm_repeats: int = 30,
+    clock: Callable[[], float] = time.perf_counter,
+    rss_reader: Callable[[], PeakRssReading] | None = None,
 ) -> EvaluationRun:
-    """Run an adapter and evaluate its logical Memory rankings."""
+    """Run an adapter, measuring one cold call plus repeated warm calls per query.
+
+    The cold ranking is the ranking scored for quality. Warm calls are timing samples only;
+    if their logical-ID ordering differs, drift is counted instead of silently ignored.
+    """
     if k < 10:
         raise ValueError("k must be at least 10 so all PA1 metrics can be computed")
+    if isinstance(warm_repeats, bool) or not isinstance(warm_repeats, int) or warm_repeats < 0:
+        raise ValueError("warm_repeats must be a non-negative integer")
+
+    read_rss = rss_reader or peak_rss_reading
+    rss_before = read_rss()
     selected = dataset.queries_for_split(split)
     evaluated: list[EvaluatedQuery] = []
     for query in selected:
-        started = time.perf_counter()
-        results = tuple(retriever.search(query.text, k))
-        elapsed = time.perf_counter() - started
+        cold_results, cold_elapsed = _timed_search(
+            retriever, query.text, k, clock=clock
+        )
         ranked_ids = _validate_ranked_ids(
             dataset,
             query,
-            [result.memory_id for result in results],
+            [result.memory_id for result in cold_results],
         )
+
+        warm_latencies: list[float] = []
+        drift_count = 0
+        for _ in range(warm_repeats):
+            warm_results, warm_elapsed = _timed_search(
+                retriever, query.text, k, clock=clock
+            )
+            warm_ids = _validate_ranked_ids(
+                dataset,
+                query,
+                [result.memory_id for result in warm_results],
+            )
+            warm_latencies.append(warm_elapsed)
+            if warm_ids != ranked_ids:
+                drift_count += 1
+
         evaluated.append(
             EvaluatedQuery(
                 query_id=query.query_id,
                 split=query.split,
                 slice_tags=query.slice_tags,
                 ranked_ids=ranked_ids,
-                latency_seconds=elapsed,
+                latency_seconds=cold_elapsed,
+                warm_latency_seconds=tuple(warm_latencies),
+                warm_rank_drift_count=drift_count,
                 metrics=compute_query_metrics(query, ranked_ids),
             )
         )
-    return _build_run(dataset, evaluated, split=split)
+    rss_after = read_rss()
+    return _build_run(
+        dataset,
+        evaluated,
+        split=split,
+        rss_before=rss_before,
+        rss_after=rss_after,
+    )
+
+
+def evaluate_ann_recall(
+    exact_run: EvaluationRun,
+    ann_run: EvaluationRun,
+    *,
+    k: int = 10,
+) -> AnnRecallSummary:
+    """Compare ANN rankings to an ExactScan run built from the same canonical vectors."""
+    if k <= 0:
+        raise ValueError("k must be positive")
+    if exact_run.dataset_sha256 != ann_run.dataset_sha256:
+        raise ValueError("Exact and ANN runs must use the identical dataset hash")
+    if exact_run.split != ann_run.split:
+        raise ValueError("Exact and ANN runs must use the same split")
+
+    exact_by_id = {item.query_id: item for item in exact_run.queries}
+    ann_by_id = {item.query_id: item for item in ann_run.queries}
+    if set(exact_by_id) != set(ann_by_id):
+        raise ValueError("Exact and ANN runs must contain the same query IDs")
+
+    per_query = {
+        query_id: ann_recall_at_k(
+            exact_by_id[query_id].ranked_ids,
+            ann_by_id[query_id].ranked_ids,
+            k,
+        )
+        for query_id in sorted(exact_by_id)
+    }
+    return AnnRecallSummary(
+        k=k,
+        query_count=len(per_query),
+        mean_recall=mean(list(per_query.values())),
+        per_query=per_query,
+    )

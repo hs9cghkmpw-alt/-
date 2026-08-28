@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 VALID_GRADES = {0, 1, 2, 3}
 VALID_SPLITS = {"dev", "blind"}
+VALID_JUDGEMENT_VISIBILITY = {"open", "held_out"}
 
 REQUIRED_SLICE_TAGS = {
     "japanese_to_japanese",
@@ -57,6 +58,7 @@ class EvaluationDataset:
     version: str
     memories: tuple[EvaluationMemory, ...]
     queries: tuple[EvaluationQuery, ...]
+    judgement_visibility: str = "open"
 
     @property
     def memory_ids(self) -> frozenset[str]:
@@ -65,6 +67,10 @@ class EvaluationDataset:
     @property
     def query_ids(self) -> frozenset[str]:
         return frozenset(query.query_id for query in self.queries)
+
+    @property
+    def acceptance_blind_ready(self) -> bool:
+        return self.judgement_visibility == "held_out"
 
     def queries_for_split(self, split: str | None) -> tuple[EvaluationQuery, ...]:
         if split is None:
@@ -162,6 +168,15 @@ def dataset_from_mapping(raw: Mapping[str, Any], *, require_all_slices: bool = T
     if not isinstance(raw, Mapping):
         raise DatasetValidationError("dataset root must be an object")
     version = _require_nonempty_string(raw.get("version"), "version")
+    judgement_visibility = raw.get("judgement_visibility", "open")
+    if (
+        not isinstance(judgement_visibility, str)
+        or judgement_visibility not in VALID_JUDGEMENT_VISIBILITY
+    ):
+        raise DatasetValidationError(
+            "judgement_visibility must be one of "
+            + ", ".join(sorted(VALID_JUDGEMENT_VISIBILITY))
+        )
     memories_raw = raw.get("memories")
     queries_raw = raw.get("queries")
     if not isinstance(memories_raw, list) or not memories_raw:
@@ -209,7 +224,12 @@ def dataset_from_mapping(raw: Mapping[str, Any], *, require_all_slices: bool = T
                 "dataset is missing required slice tags: " + ", ".join(sorted(missing))
             )
 
-    return EvaluationDataset(version=version, memories=memories, queries=queries)
+    return EvaluationDataset(
+        version=version,
+        memories=memories,
+        queries=queries,
+        judgement_visibility=judgement_visibility,
+    )
 
 
 def load_dataset(path: str | Path, *, require_all_slices: bool = True) -> EvaluationDataset:
@@ -221,6 +241,7 @@ def load_dataset(path: str | Path, *, require_all_slices: bool = True) -> Evalua
 def canonical_dataset_bytes(dataset: EvaluationDataset) -> bytes:
     payload = {
         "version": dataset.version,
+        "judgement_visibility": dataset.judgement_visibility,
         "memories": [
             {
                 "memory_id": memory.memory_id,
