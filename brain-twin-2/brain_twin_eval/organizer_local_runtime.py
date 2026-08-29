@@ -1,14 +1,16 @@
 """Local-files-only runtime for organizer model evaluation.
 
-This module is evaluation-only. It never writes the Vault and never imports from
-production pipeline code. Model acquisition is a separate, explicit network step.
+Evaluation-only: never writes the Vault and never imports production pipeline code.
+Model acquisition is a separate, explicit network step.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from importlib import metadata
 import json
 import math
+import platform
 from pathlib import Path
 from statistics import median
 from time import perf_counter
@@ -153,7 +155,11 @@ def build_organizer_run_config(
         top_p=1.0,
         max_new_tokens=max_new_tokens,
         seed=seed,
-        extra_runtime_params=(("enable_thinking", "false"), ("do_sample", "false")),
+        extra_runtime_params=(
+            ("apply_chat_template_tokenize", "true"),
+            ("enable_thinking", "false"),
+            ("do_sample", "false"),
+        ),
     )
 
 
@@ -212,12 +218,8 @@ def run_public_package(
                 break
 
     after = peak_rss_reading()
-    if before.bytes is None or after.bytes is None:
-        growth = None
-    else:
-        growth = max(0, after.bytes - before.bytes)
+    growth = None if before.bytes is None or after.bytes is None else max(0, after.bytes - before.bytes)
     method = after.method if after.bytes is not None else before.method
-
     evidence = OrganizerRuntimeEvidence(
         candidate_id=candidate.candidate_id,
         organizer_config_sha256=config.sha256,
@@ -263,10 +265,7 @@ class TransformersLocalOrganizerGenerator:
         self.processor = processor
         self.model = model
         self.quantization = "none"
-        self.runtime_revision = (
-            f"transformers={getattr(transformers_module, '__version__', 'unknown')};"
-            f"torch={getattr(torch_module, '__version__', 'unknown')}"
-        )
+        self.runtime_revision = _runtime_revision()
         template = _chat_template(processor)
         self.chat_template_sha256 = hashlib.sha256(template.encode("utf-8")).hexdigest()
 
@@ -290,24 +289,20 @@ class TransformersLocalOrganizerGenerator:
             ) from exc
 
         torch.manual_seed(seed)
-        loader = candidate.loader
         common = {
             "pretrained_model_name_or_path": str(model_dir),
             "local_files_only": True,
             "trust_remote_code": False,
         }
-        if loader == "transformers_causal_lm":
+        if candidate.loader == "transformers_causal_lm":
             processor = transformers.AutoTokenizer.from_pretrained(**common)
-            model = transformers.AutoModelForCausalLM.from_pretrained(
-                **common,
-                torch_dtype="auto",
-            )
-        elif loader == "transformers_multimodal_text_only":
+            model = transformers.AutoModelForCausalLM.from_pretrained(**common, torch_dtype="auto")
+        elif candidate.loader == "transformers_multimodal_text_only":
             processor = transformers.AutoProcessor.from_pretrained(**common)
             model = _load_multimodal_model(transformers, common)
         else:
             raise OrganizerCandidateError(
-                f"unsupported direct organizer loader: {loader}; blocked candidates require separate review"
+                f"unsupported direct organizer loader: {candidate.loader}; blocked candidates require separate review"
             )
         model.eval()
         model.to("cpu")
@@ -345,19 +340,11 @@ class TransformersLocalOrganizerGenerator:
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": user_text},
             ]
-        prompt = self.processor.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=False,
-        )
-        encoded = self.processor(text=prompt, return_tensors="pt") if callable(self.processor) else None
-        if encoded is None:
-            raise OrganizerCandidateError("organizer processor is not callable")
-        encoded = {key: value.to("cpu") if hasattr(value, "to") else value for key, value in encoded.items()}
+
+        encoded = _encode_chat(self.processor, messages)
         input_ids = encoded.get("input_ids")
         if input_ids is None:
-            raise OrganizerCandidateError("organizer processor did not return input_ids")
+            raise OrganizerCandidateError("organizer chat template did not return input_ids")
         with self.torch.inference_mode():
             output_ids = self.model.generate(
                 **encoded,
@@ -372,13 +359,41 @@ class TransformersLocalOrganizerGenerator:
             decoder = getattr(self.processor.tokenizer, "batch_decode", None)
         if decoder is None:
             raise OrganizerCandidateError("organizer processor does not expose batch_decode")
-        text = decoder(generated, skip_special_tokens=True)[0]
-        return str(text).strip()
+        return str(decoder(generated, skip_special_tokens=True)[0]).strip()
+
+
+def _encode_chat(processor: Any, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Follow the Qwen3.5 official direct-tokenization chat-template path."""
+    try:
+        encoded = processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            enable_thinking=False,
+        )
+    except TypeError as exc:
+        raise OrganizerCandidateError(
+            "installed processor/tokenizer does not support the frozen direct-tokenization chat-template contract"
+        ) from exc
+    if hasattr(encoded, "to"):
+        encoded = encoded.to("cpu")
+    if not isinstance(encoded, Mapping):
+        raise OrganizerCandidateError("organizer apply_chat_template must return a mapping when return_dict=True")
+    return {key: value.to("cpu") if hasattr(value, "to") else value for key, value in encoded.items()}
 
 
 def _load_multimodal_model(transformers_module: Any, common: dict[str, Any]) -> Any:
+    # Qwen3.5 official path is AutoModelForMultimodalLM. Fallbacks exist only for
+    # compatible Transformers builds and are still local-only/trust_remote_code=False.
     last_error: Exception | None = None
-    for name in ("AutoModelForMultimodalLM", "AutoModelForImageTextToText", "AutoModelForVision2Seq", "AutoModelForCausalLM"):
+    for name in (
+        "AutoModelForMultimodalLM",
+        "AutoModelForImageTextToText",
+        "AutoModelForVision2Seq",
+        "AutoModelForCausalLM",
+    ):
         cls = getattr(transformers_module, name, None)
         if cls is None:
             continue
@@ -398,6 +413,18 @@ def _chat_template(processor: Any) -> str:
     if not isinstance(template, str) or not template:
         raise OrganizerCandidateError("organizer processor/tokenizer has no frozen chat template")
     return template
+
+
+def _runtime_revision() -> str:
+    package_names = ("torch", "torchvision", "transformers", "huggingface-hub", "Pillow")
+    versions: list[str] = [f"python={platform.python_version()}"]
+    for package in package_names:
+        try:
+            value = metadata.version(package)
+        except metadata.PackageNotFoundError:
+            value = "missing"
+        versions.append(f"{package}={value}")
+    return ";".join(versions)
 
 
 def _nearest_rank_percentile(values: list[float], percentile: float) -> float:

@@ -1,0 +1,8 @@
+# Organizer Windows evaluation environment (research/evaluation only)
+# Frozen 2026-08-29 after checking current PyPI Windows CPython 3.12 wheels.
+# Do not merge these heavyweight packages into production requirements.txt.
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.16.1
+huggingface-hub==1.28.0
+Pillow==12.3.0
