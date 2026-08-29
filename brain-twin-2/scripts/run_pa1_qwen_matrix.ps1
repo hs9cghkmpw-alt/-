@@ -3,7 +3,7 @@ param(
     [switch]$SkipInstall,
     [switch]$SkipAcquire,
     [int]$WarmRepeats = 3,
-    [string]$OutDir = ".evaluation-results\pa1-qwen-matrix"
+    [string]$OutDir = ""
 )
 
 Set-StrictMode -Version Latest
@@ -64,11 +64,27 @@ if (-not (Test-Path (Join-Path $RerankerPath "brain_twin_model_pin.json"))) {
     throw "pinned reranker model not found at $RerankerPath"
 }
 
-$OutputRoot = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot $OutDir))
-New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
+if ([string]::IsNullOrWhiteSpace($OutDir)) {
+    $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmssZ")
+    $OutDir = ".evaluation-results\pa1-qwen-matrix\$($GitCommit.Substring(0, 8))-$stamp"
+}
+if ([System.IO.Path]::IsPathRooted($OutDir)) {
+    $OutputRoot = [System.IO.Path]::GetFullPath($OutDir)
+} else {
+    $OutputRoot = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot $OutDir))
+}
+if (Test-Path $OutputRoot) {
+    $existing = @(Get-ChildItem -LiteralPath $OutputRoot -Force)
+    if ($existing.Count -gt 0) {
+        throw "Output directory is not empty: $OutputRoot. Use a new -OutDir so evidence from separate runs cannot mix."
+    }
+} else {
+    New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
+}
+Write-Host "evidence root: $OutputRoot"
+
 $EvidenceDir = Join-Path $OutputRoot "environment"
 New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
-
 & $Python -m pip freeze | Set-Content -Encoding UTF8 (Join-Path $EvidenceDir "pip-freeze.txt")
 
 $os = $null
@@ -79,6 +95,7 @@ try { $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1 } catch {}
 try { $computer = Get-CimInstance Win32_ComputerSystem } catch {}
 $environment = [ordered]@{
     schema = 1
+    created_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     git_commit = $GitCommit
     python = (& $Python --version 2>&1 | Out-String).Trim()
     os_caption = if ($os) { $os.Caption } else { $null }

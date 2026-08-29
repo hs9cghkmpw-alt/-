@@ -21,10 +21,12 @@ def _payload(
     fp5: float = 0.2,
     warm_p95: float | None = 0.3,
     dataset_sha: str = "abc",
+    git_commit: str = "1" * 40,
 ) -> dict:
     return {
         "manifest": {
             "experiment_id": experiment_id,
+            "git_commit": git_commit,
             "model_name": "Qwen/Qwen3-Embedding-0.6B",
             "model_revision": "a" * 40,
             "instruction_id": instruction,
@@ -96,6 +98,7 @@ def test_summary_keeps_dense_and_overall_winners_separate() -> None:
     summary = summarize_payloads([("dense.json", dense), ("reranked.json", reranked)])
     assert summary["dense_winner"]["candidate_id"] == "dense"
     assert summary["overall_open_winner"]["candidate_id"] == "dense+rerank"
+    assert summary["git_commit"] == "1" * 40
     assert summary["formal_blind_acceptance"] is False
 
 
@@ -109,6 +112,34 @@ def test_summary_rejects_mixed_dataset_identity() -> None:
         )
     except MatrixSummaryError as exc:
         assert "same dataset" in str(exc)
+    else:
+        raise AssertionError("expected MatrixSummaryError")
+
+
+def test_summary_rejects_mixed_git_commit() -> None:
+    try:
+        summarize_payloads(
+            [
+                ("a.json", _payload(experiment_id="a", git_commit="1" * 40)),
+                ("b.json", _payload(experiment_id="b", git_commit="2" * 40)),
+            ]
+        )
+    except MatrixSummaryError as exc:
+        assert "Git commit" in str(exc)
+    else:
+        raise AssertionError("expected MatrixSummaryError")
+
+
+def test_summary_rejects_duplicate_candidate_ids() -> None:
+    try:
+        summarize_payloads(
+            [
+                ("a.json", _payload(experiment_id="same")),
+                ("b.json", _payload(experiment_id="same")),
+            ]
+        )
+    except MatrixSummaryError as exc:
+        assert "duplicate candidate IDs" in str(exc)
     else:
         raise AssertionError("expected MatrixSummaryError")
 

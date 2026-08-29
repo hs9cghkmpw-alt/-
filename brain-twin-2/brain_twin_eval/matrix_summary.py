@@ -112,30 +112,46 @@ def summarize_payloads(items: Iterable[tuple[str, Mapping[str, Any]]]) -> dict[s
     dataset_version: str | None = None
     split: str | None = None
     judgement_visibility: str | None = None
+    git_commit: str | None = None
 
     for path, payload in items:
         current_sha = str(payload.get("dataset_sha256", ""))
         current_version = str(payload.get("dataset_version", ""))
         current_split = payload.get("split")
         current_visibility = str(payload.get("judgement_visibility", ""))
-        if not current_sha or not current_version:
-            raise MatrixSummaryError(f"report lacks dataset identity: {path}")
+        manifest = payload.get("manifest")
+        if not isinstance(manifest, Mapping):
+            raise MatrixSummaryError(f"report lacks manifest: {path}")
+        current_commit = str(manifest.get("git_commit", ""))
+        if not current_sha or not current_version or not current_commit:
+            raise MatrixSummaryError(f"report lacks dataset/Git identity: {path}")
         if dataset_sha is None:
             dataset_sha = current_sha
             dataset_version = current_version
             split = current_split
             judgement_visibility = current_visibility
+            git_commit = current_commit
         elif (
             current_sha != dataset_sha
             or current_version != dataset_version
             or current_split != split
             or current_visibility != judgement_visibility
+            or current_commit != git_commit
         ):
-            raise MatrixSummaryError("all matrix reports must use the same dataset/split/judgement visibility")
+            raise MatrixSummaryError(
+                "all matrix reports must use the same dataset/split/judgement visibility/Git commit"
+            )
         entries.append(entry_from_payload(payload, report_path=path))
 
     if not entries:
         raise MatrixSummaryError("no evaluation reports found")
+
+    candidate_ids = [entry.candidate_id for entry in entries]
+    duplicates = sorted({candidate_id for candidate_id in candidate_ids if candidate_ids.count(candidate_id) > 1})
+    if duplicates:
+        raise MatrixSummaryError(
+            "duplicate candidate IDs in matrix reports: " + ", ".join(duplicates)
+        )
 
     entries.sort(key=lambda entry: entry.candidate_id)
     dense_winner = choose_winner(entries, kind="dense")
@@ -147,6 +163,7 @@ def summarize_payloads(items: Iterable[tuple[str, Mapping[str, Any]]]) -> dict[s
         "warning": "Open judgements may be used for iteration but not final production acceptance.",
         "dataset_version": dataset_version,
         "dataset_sha256": dataset_sha,
+        "git_commit": git_commit,
         "split": split,
         "judgement_visibility": judgement_visibility,
         "entry_count": len(entries),
@@ -186,6 +203,7 @@ def summary_markdown(summary: Mapping[str, Any]) -> str:
         "> Development evidence only. The committed open benchmark is not formal blind acceptance.",
         "",
         f"- Dataset: `{summary['dataset_version']}` (`{summary['dataset_sha256']}`)",
+        f"- Git commit: `{summary['git_commit']}`",
         f"- Split: `{summary['split']}`",
         f"- Reports: {summary['entry_count']}",
         "",
@@ -204,12 +222,8 @@ def summary_markdown(summary: Mapping[str, Any]) -> str:
     dense = summary.get("dense_winner")
     overall = summary.get("overall_open_winner")
     lines.extend(["", "## Open-development selection", ""])
-    lines.append(
-        "- Dense winner: " + (f"`{dense['candidate_id']}`" if dense else "n/a")
-    )
-    lines.append(
-        "- Overall open winner: " + (f"`{overall['candidate_id']}`" if overall else "n/a")
-    )
+    lines.append("- Dense winner: " + (f"`{dense['candidate_id']}`" if dense else "n/a"))
+    lines.append("- Overall open winner: " + (f"`{overall['candidate_id']}`" if overall else "n/a"))
     lines.extend(
         [
             "",

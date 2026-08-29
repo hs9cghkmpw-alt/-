@@ -25,17 +25,19 @@ scripts/run_pa1_qwen_matrix.ps1
    `sentence-transformers==5.4.1`, `huggingface-hub==1.28.0`);
 5. explicitly acquires the pinned Qwen embedding and reranker snapshots unless `-SkipAcquire` is
    supplied;
-6. records non-identifying machine/runtime evidence and `pip freeze` under ignored
+6. creates a fresh per-run evidence directory and refuses to reuse a non-empty custom output
+   directory, preventing stale reports from contaminating winner selection;
+7. records non-identifying machine/runtime evidence and `pip freeze` under ignored
    `.evaluation-results/`;
-7. compares Qwen3-Embedding-0.6B at 1024 dimensions with:
+8. compares Qwen3-Embedding-0.6B at 1024 dimensions with:
    - Brain Twin task-specific English instruction;
    - equivalent Japanese instruction;
    - no instruction;
-8. advances only the winning instruction to 768 / 512 / 256 dimensions;
-9. selects the open-development dense winner deterministically;
-10. compares Qwen3-Reranker-0.6B OFF vs ON using that exact dense profile and a frozen top-50
+9. advances only the winning instruction to 768 / 512 / 256 dimensions;
+10. selects the open-development dense winner deterministically;
+11. compares Qwen3-Reranker-0.6B OFF vs ON using that exact dense profile and a frozen top-50
     candidate pool;
-11. produces machine-readable and human-readable matrix summaries.
+12. produces machine-readable and human-readable matrix summaries.
 
 ## Selection rule
 
@@ -49,6 +51,7 @@ The open-development ordering is deliberately deterministic:
 6. lower warm p95 latency;
 7. candidate ID as a final deterministic tie-break.
 
+The summarizer also rejects mixed dataset identities, mixed Git commits, and duplicate candidate IDs.
 This rule is for deciding what to test next. It is **not** a production acceptance gate.
 
 ## Run from a Windows checkout
@@ -56,6 +59,8 @@ This rule is for deciding what to test next. It is **not** a production acceptan
 From the repository root:
 
 ```powershell
+git switch brain-twin-dev
+git pull --ff-only origin brain-twin-dev
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\brain-twin-2\scripts\run_pa1_qwen_matrix.ps1
 ```
 
@@ -70,15 +75,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\brain-twin-2\scripts\r
 
 # Reduce repeated timing work while debugging.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\brain-twin-2\scripts\run_pa1_qwen_matrix.ps1 -WarmRepeats 0
+
+# Optional explicit evidence directory. It must be empty if it already exists.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\brain-twin-2\scripts\run_pa1_qwen_matrix.ps1 -OutDir ".evaluation-results\my-pa1-run"
 ```
 
 ## Output
 
-Default output root:
+Without `-OutDir`, every invocation gets a new directory:
 
 ```text
-brain-twin-2/.evaluation-results/pa1-qwen-matrix/
+brain-twin-2/.evaluation-results/pa1-qwen-matrix/<git-sha8>-<UTC-timestamp>/
 ```
+
+This is intentional: two physical runs must never silently share candidate reports.
 
 Important files:
 
@@ -99,7 +109,8 @@ The output root is Git-ignored. Model files remain outside the repository under
 - Full immutable Hugging Face revisions are recorded; `main` / `latest` are not accepted evidence.
 - No real user Vault is read.
 - The run stops on tracked source changes, dependency-install failure, model-acquisition failure,
-  missing pins, candidate failure, or summary inconsistency.
+  missing pins, candidate failure, non-empty reused evidence directory, duplicate candidate IDs,
+  mixed Git commits, or summary inconsistency.
 - The open v2 benchmark can guide iteration but cannot certify production.
 
 ## After this run
