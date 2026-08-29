@@ -98,14 +98,6 @@ Shape:
 - 5 long target Memories
 - required spelling/transliteration, mixed-language, short-query, semantic, lexical and long-Memory slices
 
-Files:
-
-- `brain_twin_eval/open_gold_v2.py`
-- `scripts/generate_japanese_retrieval_v2.py`
-- `tests/test_japanese_retrieval_gold_v2.py`
-- `docs/JAPANESE_RETRIEVAL_EVALUATION.md`
-- `docs/PA1_OPEN_GOLD_V2.md`
-
 The v2 dataset is deterministic and fully synthetic. It is public/open by design. Its `blind` labels
 exercise split handling only and are **not** formal held-out acceptance evidence.
 
@@ -117,53 +109,68 @@ Implementation:
 - exact-SHA Actions run `33219538819`: **success**
 - result: **383 passed**
 
-The evaluation-only runtime:
-
-- loads embedding/reranker models only from existing local directories;
-- sets `local_files_only=True` for Sentence Transformers / CrossEncoder loading;
-- performs exact dense ranking over the open corpus so ANN approximation cannot confound embedding quality;
-- supports explicit dimension truncation before normalization;
-- compares Qwen English/Japanese/no-instruction query templates;
-- can rerank a frozen first-stage candidate pool and produce paired OFF-vs-ON metric deltas;
-- refuses duplicate/unknown/inactive candidate IDs;
-- does not persist local model paths or raw instruction text in experiment metadata;
-- does not modify production `brain_twin/`, Vault, SQLite, or production embedding config.
-
-Files:
-
-- `brain_twin_eval/candidate_runtime.py`
-- `scripts/run_local_candidate_pipeline.py`
-- `tests/test_candidate_runtime.py`
-- `evaluation_profiles/qwen3_embedding_en.txt`
-- `evaluation_profiles/qwen3_embedding_ja.txt`
-- `evaluation_profiles/qwen3_embedding_none.txt`
-- `evaluation_profiles/qwen3_reranker_brain_twin.txt`
-- `docs/PA1_LOCAL_CANDIDATE_RUNNER.md`
+The evaluation-only runtime loads embedding/reranker models only from existing local directories,
+uses `local_files_only=True`, performs exact dense ranking so ANN approximation cannot confound model
+quality, supports explicit dimension truncation, compares query-instruction variants, and can rerank
+a frozen first-stage pool. It does not modify production `brain_twin/`, Vault, SQLite, or production
+embedding config.
 
 ### Pinned Qwen acquisition — prepared, Windows execution pending
 
-The explicit acquisition helper is `scripts/acquire_pa1_qwen_models.py`. It is never called by
-normal Brain Twin runtime/reindex/evaluation. It verifies the requested immutable revision before
-calling Hugging Face snapshot download and stores models outside the repository.
+Acquisition helper:
+
+- commit `49086fda15e938b8bf2808cbd355bf5ad8638d59`
+- exact-SHA Actions run `33219863595`: **success**
+- result: **387 passed**
 
 Pinned PA1 starting revisions:
 
 - Qwen3-Embedding-0.6B: `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`
 - Qwen3-Reranker-0.6B: `e61197ed45024b0ed8a2d74b80b4d909f1255473`
 
-See `docs/PA1_QWEN_ACQUISITION.md`.
+The helper verifies the requested immutable revision before snapshot download and stores models outside
+the repository. Normal Brain Twin runtime never invokes it. See `docs/PA1_QWEN_ACQUISITION.md`.
+
+### One-command Qwen Windows matrix — GO for execution
+
+Initial orchestration:
+
+- commit `ae20f634f9a112817c3a835ed98665b1e5c0979c`
+- exact-SHA Actions run `33223026401`: **success**
+- result: **394 passed**
+
+Evidence-isolation hardening:
+
+- commit `af8f7186053f4e7df2d0219e880367cd9caf6e83`
+- exact-SHA Actions run `33223233939`: **success**
+- result: **396 passed**
+
+`scripts/run_pa1_qwen_matrix.ps1` now performs the full open-development sequence from one Windows
+command: environment setup, immutable model acquisition, English/Japanese/no-instruction comparison at
+1024d, winner-only 768/512/256 sweep, deterministic dense winner selection, and Qwen reranker OFF/ON
+comparison on a frozen top-50 pool.
+
+Evidence isolation is enforced:
+
+- default output directory is unique by Git SHA prefix + UTC timestamp;
+- non-empty custom output directories are rejected;
+- matrix reports must have one dataset identity, split, judgement visibility, and Git commit;
+- duplicate candidate IDs are rejected.
+
+Review handoff: `docs/reviews/PA1_QWEN_MATRIX_RUNNER_REVIEW_2026-08-29.md`.
+Runbook: `docs/PA1_QWEN_MATRIX_RUNBOOK.md`.
 
 ## Still required before choosing a production embedding/reranker profile
 
-- clean Windows Python 3.12 evaluation-environment smoke test and full dependency freeze;
-- explicit pinned model acquisition on the evaluation machine;
+- **physical Windows execution of the prepared Qwen matrix**;
+- actual Windows Python/runtime dependency freeze and machine evidence;
+- actual Qwen English/Japanese/no-instruction quality and latency results;
+- actual allowed-dimension comparison;
+- actual Qwen3-Reranker-0.6B OFF/ON comparison;
 - genuinely held-out blind set outside the tuning workspace;
 - two-judge calibration/adjudication;
 - tokenizer-aware near-512 / 2k / 8k cases;
 - predeclared Windows CPU/RAM/latency acceptance budgets;
-- Qwen English/Japanese/no-instruction comparison;
-- allowed-dimension comparison;
-- Qwen3-Reranker-0.6B OFF/ON comparison on the same frozen candidate pool;
 - pinned BGE-M3/E5/Nomic/GTE/MiniLM challenger runs;
 - independent evidence review.
 
@@ -178,10 +185,17 @@ No production embedding or reranker has been activated.
 
 ## Next authorized action
 
-Run the explicit pinned Qwen acquisition + clean Windows evaluation-runtime smoke test, freeze the
-actual environment, then execute the open PA1 Qwen instruction comparison. If that passes the
-quality/runtime sanity checks, run Qwen3-Reranker OFF/ON on the same frozen first-stage candidate
-pool. Challenger models follow under the identical harness.
+On the Windows evaluation machine, sync `brain-twin-dev` and run exactly:
+
+```powershell
+git switch brain-twin-dev
+git pull --ff-only origin brain-twin-dev
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\brain-twin-2\scripts\run_pa1_qwen_matrix.ps1
+```
+
+After the run, review the generated `matrix_summary.md`, per-slice reports, environment evidence, and
+failure cases. If Qwen remains strong, run BGE-M3 / multilingual-e5 / Nomic / GTE challengers under
+the same harness before freezing the production embedding profile.
 
 Do **not** silently declare Production Vector Search active. Production provider/backend/reranker
 integration, PA3 FAISS production lifecycle, organizer-LLM integration, `ask`, Contradiction
