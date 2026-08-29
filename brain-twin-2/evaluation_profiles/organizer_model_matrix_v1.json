@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "core": [
+    "qwen3.5-0.8b",
+    "qwen3.5-2b"
+  ],
+  "extended": [
+    "qwen3.5-4b",
+    "qwen3-4b-instruct-2507"
+  ],
+  "blocked": [
+    "phi-4-mini-instruct",
+    "gemma-3-4b-it"
+  ]
+}
