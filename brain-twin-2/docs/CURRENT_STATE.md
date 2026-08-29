@@ -8,263 +8,155 @@ Last updated: 2026-08-29
 - Project: `brain-twin-2/`
 - Branch: `brain-twin-dev`
 - Legacy `brain-twin/`: out of scope unless explicitly requested
+- Markdown / Obsidian Vault: persistent Memory Source of Truth
+- SQLite / embedding cache / ANN sidecars: rebuildable derived state
 
 ## Phase status
 
 - Phase 1 — Memory Foundation: **COMPLETE**
-- Phase 2 — Automatic Memory Worker / Entity Extraction / Link generation: **COMPLETE**
+- Phase 2 — Automatic Memory Worker / Entity / Link generation: **COMPLETE**
 - Phase 3 — Retrieval: **COMPLETE**
 - Phase 4 — Vector Retrieval Core (4A–4D): **GO / COMPLETE**
+- PA1 — Japanese retrieval/model acceptance: **TOOLING GO; REAL WINDOWS EVIDENCE PENDING**
 - Production Vector Search activation: **PENDING**
 
-Phase 4 completion is not production activation. A production embedding provider, ANN backend,
-reranker acceptance, organizer-model selection, and Japanese semantic acceptance run remain open.
+Phase 4 completion is not production activation. No production embedding provider, reranker, or ANN backend has been activated.
 
 ## Target second-brain architecture
 
-The user explicitly selected the desired architecture on 2026-08-29. See
-`docs/ADR_BRAIN_TWIN_TARGET_ARCHITECTURE.md`.
+See `docs/ADR_BRAIN_TWIN_TARGET_ARCHITECTURE.md`.
 
-Target roles:
-
-- automatic organization: separate replaceable local instruction-following LLM with schema output;
-- exact/lexical recall: SQLite FTS / BM25;
-- dense semantic recall: **Qwen3-Embedding-0.6B preferred target**, subject to evidence gates;
+- automatic organization: replaceable local instruction-following LLM with schema-constrained output;
+- lexical recall: SQLite FTS / BM25;
+- semantic recall: **Qwen3-Embedding-0.6B preferred target**, subject to evidence gates;
 - post-retrieval relevance: **Qwen3-Reranker-0.6B preferred target**, measured OFF vs ON;
 - associative recall: existing Entity / Link one-hop expansion;
-- large-Vault ANN: FAISS HNSW preferred target, subject to PA3 Windows gates;
+- large-Vault ANN: FAISS HNSW preferred target, subject to PA3 Windows/recovery gates;
 - persistent Memory SOT: Markdown / Obsidian Vault.
 
-The architecture preference does not permit shipping a component that fails the predeclared gates.
-The organizer LLM is still undecided.
+The organizer LLM remains undecided. Architecture preference never overrides a failed quality/resource gate.
 
-## Production Vector Activation
+## PA1 evaluation foundation
 
-Technical-selection design received review GO after
-`c8012c6311bfac8f8f68fdc5a7790d0eeed0a6ac`.
+### Open benchmark
 
-Design documents:
+`brain_twin_eval/open_gold_v2.py` generates a deterministic, privacy-safe open-development benchmark:
 
-- `docs/PRODUCTION_VECTOR_ACTIVATION_DESIGN.md`
-- `docs/ADR_PRODUCTION_VECTOR_ACTIVATION.md`
-- `docs/ADR_BRAIN_TWIN_TARGET_ARCHITECTURE.md`
+- 360 synthetic Memories;
+- 120 queries;
+- 80 dev / 40 blind-labelled pipeline-test queries;
+- semantic, paraphrase, spelling/transliteration, proper-noun, mixed JP/EN, hard-negative, short-query and long-Memory slices.
 
-## PA1 — Japanese Retrieval Evaluation
+The committed `blind` label is **not** formal held-out evidence. Formal held-out data must stay outside the repository/tuning workspace.
 
-### Harness
+### Formal blind tooling
 
-Initial implementation:
+The formal-blind protocol is implemented and CI-green. It separates model execution from private scoring and provides:
 
-- `0f93a92ef9186e6331cc5dce0de416914e488479`
-- exact-SHA Actions `33173098200`: success
-- 354 passed
+- held-out/public package separation;
+- two-judge comparison/adjudication support;
+- frozen retrieval-config SHA;
+- Launch Envelope binding dataset/policy/config/evaluator/runtime identities;
+- clean exact Git HEAD verification before model load;
+- critical-slice aggregate gates without leaking held-out slice scores;
+- private scoring and redacted final acceptance evidence.
 
-Self-review hardening:
+No genuine formal blind run has occurred yet.
 
-- `5a2851534f9385ff0e4cc90af89195de300f890f`
-- exact-SHA Actions `33177339391`: success
-- 370 passed
+## PA1 candidate matrix — current state
 
-Hardening added warm-run latency statistics, RSS, open-vs-held-out judgement visibility,
-blind-report redaction, dataset identity checks, deterministic confidence intervals, paired deltas,
-stronger manifest secret rejection, and correct median/p95 behavior. Production `brain_twin/` was
-not changed by that hardening.
+Catalog: `evaluation_profiles/challenger_catalog_v1.json` (schema 2)
 
-### v1 seed
+All listed model revisions are immutable full commit SHAs.
 
-- 36 Memories
-- 24 queries
-- 15 dev / 9 blind-labelled
-- committed/open judgements
-- pipeline/regression seed only
+### Ready for normal open-development execution
 
-### v2 open benchmark — GO for open development
+- Qwen3-Embedding-0.6B — `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`
+- Qwen3-Reranker-0.6B — `e61197ed45024b0ed8a2d74b80b4d909f1255473`
+- BGE-M3 — `9a0624b896d81da7492a910ffa53731274b6cf3d`
+- multilingual-e5-base — `d128750597153bb5987e10b1c3493a34e5a4502a`
+- multilingual-e5-large-instruct — `274baa43b0e13e37fafa6428dbc7938e62e5c439`
+- paraphrase-multilingual-MiniLM-L12-v2 control — `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`
 
-Implementation:
+Candidate-specific query/document formatting and allowed dimensions are committed in the catalog/profile files and become part of evaluation evidence.
 
-- commit `c1a1d9a1b1879c4f8425739d891929159130e95c`
-- exact-SHA Actions run `33219195386`: **success**
-- result: **375 passed**
+### Pinned but fail-closed pending Windows custom-code smoke
 
-Shape:
+- Nomic Embed v2 MoE — model `e89d1c9283c98dbd18f5003dc625394293978922`; custom-code dependency `nomic-ai/nomic-bert-2048@7710840340a098cfb869c4f65e87cf2b1b70caca`
+- GTE multilingual base — model `9bbca17d9273fd0d03d5725c7a4b0f6b45142062`; custom-code dependency `Alibaba-NLP/new-impl@40ced75c3017eb27626c9d4ea981bde21a2662f4`
 
-- **360 synthetic Memories**
-- **120 queries**
-- **80 dev / 40 blind-labelled**
-- 30 broad second-brain scenarios
-- 300 same-domain/same-entity distractor Memories
-- 10 explicit no-answer hard-negative queries
-- 5 inactive distractors
-- 5 long target Memories
-- required spelling/transliteration, mixed-language, short-query, semantic, lexical and long-Memory slices
+For these two candidates, acquisition is allowed but normal evaluation/formal use stays blocked until the exact pinned `code_revision` path passes the isolated offline Windows smoke. A successful smoke does **not** auto-promote catalog status.
 
-The v2 dataset is deterministic and fully synthetic. It is public/open by design. Its `blind` labels
-exercise split handling only and are **not** formal held-out acceptance evidence.
+## Latest PA1 challenger-preparation evidence
 
-### Local candidate runner — GO for evaluation scaffolding
+Challenger orchestration implementation:
 
-Implementation:
+- commit `a5f1448490586cff7579b11c69aa5f0d3b0f0960`
+- exact-SHA Actions run `33229610378`: **success**
+- result: **466 passed**
 
-- commit `36c364299b107f13125a02d5554d1920eb91c0ec`
-- exact-SHA Actions run `33219538819`: **success**
-- result: **383 passed**
+Remote-code isolation implementation:
 
-The evaluation-only runtime loads embedding/reranker models only from existing local directories,
-uses `local_files_only=True`, performs exact dense ranking so ANN approximation cannot confound model
-quality, supports explicit dimension truncation, compares query-instruction variants, and can rerank
-a frozen first-stage pool. It does not modify production `brain_twin/`, Vault, SQLite, or production
-embedding config.
+- commit `52a11a882a381952234582f5ead97aa823ed0755`
+- exact-SHA run `33229774485`: **failed during collection** because the new smoke helper called the existing RSS API by the wrong name
+- failure was limited to evaluation tooling; no production runtime change
 
-### Pinned Qwen acquisition — prepared, Windows execution pending
+Corrective commit:
 
-Acquisition helper:
+- commit `731fab69d24086330b5c9514a0ddd1e8da44b59f`
+- exact-SHA Actions run `33229832697`: **success**
+- job `99040554640`
+- result: **473 passed in 42.39s**
 
-- commit `49086fda15e938b8bf2808cbd355bf5ad8638d59`
-- exact-SHA Actions run `33219863595`: **success**
-- result: **387 passed**
+The correction uses the existing `peak_rss_reading().bytes` API. Production `brain_twin/`, the real Vault, and production embedding configuration were not changed by the challenger-preparation series.
 
-Pinned PA1 starting revisions:
-
-- Qwen3-Embedding-0.6B: `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`
-- Qwen3-Reranker-0.6B: `e61197ed45024b0ed8a2d74b80b4d909f1255473`
-
-The helper verifies the requested immutable revision before snapshot download and stores models outside
-the repository. Normal Brain Twin runtime never invokes it. See `docs/PA1_QWEN_ACQUISITION.md`.
-
-### One-command Qwen Windows matrix — GO for execution
-
-Initial orchestration:
-
-- commit `ae20f634f9a112817c3a835ed98665b1e5c0979c`
-- exact-SHA Actions run `33223026401`: **success**
-- result: **394 passed**
-
-Evidence-isolation hardening:
-
-- commit `af8f7186053f4e7df2d0219e880367cd9caf6e83`
-- exact-SHA Actions run `33223233939`: **success**
-- result: **396 passed**
-
-`scripts/run_pa1_qwen_matrix.ps1` performs the open-development Windows sequence from one command:
-environment setup, immutable model acquisition, English/Japanese/no-instruction comparison at 1024d,
-winner-only 768/512/256 sweep, deterministic dense winner selection, and Qwen reranker OFF/ON
-comparison on a frozen top-50 pool.
-
-Evidence isolation is enforced:
-
-- default output directory is unique by Git SHA prefix + UTC timestamp;
-- non-empty custom output directories are rejected;
-- matrix reports must have one dataset identity, split, judgement visibility, and Git commit;
-- duplicate candidate IDs are rejected.
-
-Review handoff: `docs/reviews/PA1_QWEN_MATRIX_RUNNER_REVIEW_2026-08-29.md`.
-Runbook: `docs/PA1_QWEN_MATRIX_RUNBOOK.md`.
-
-### Formal blind acceptance protocol — GO for tooling; no formal run yet
-
-Latest sealing implementation:
-
-- commit `6d08616d58d187d65df104bcb82a8705d2fe74aa`
-- exact-SHA Actions run `33227872937`: **success**
-- exact job `99034999663`
-- result: **447 passed**
-
-The formal-blind tooling now provides:
-
-- a shared **Formal Config Builder** that freezes behavior-changing retrieval settings before a blind
-  runner/query package is introduced;
-- a **Launch Envelope** binding cycle ID, runner SHA, private source dataset identity, policy SHA,
-  retrieval-config SHA, exact evaluator Git SHA, evaluation `k`, expected warm-repeat count, and an
-  optional model-artifact manifest SHA;
-- an actual Git check before model load: the formal runner resolves `git rev-parse HEAD` itself and
-  requires the tracked worktree to be clean; a caller-supplied SHA is not trusted as evidence;
-- private **Critical Slice Gates** for per-slice Recall@5/MRR@10/nDCG@10/must-hit@5/false-positive@5;
-  the public formal report exposes only critical-rule spec SHA, rule count, and aggregate PASS/FAIL —
-  not slice names, thresholds, or held-out per-slice scores;
-- model-side ranking and private-side scoring remain separated; the model side receives no judgement
-  labels and emits ranking/timing/RSS evidence only;
-- formal acceptance requires the same launch envelope, policy, dataset identity, evaluator SHA,
-  retrieval-config SHA, runtime protocol, and critical-slice attestation.
-
-Important identity split:
-
-- **retrieval behavior SHA** includes model/revision, instruction and its hash, dimension,
-  normalization, document/query template commitments, reranker/base-model contract, and candidate-k;
-- measurement/data-shape fields such as `evaluation_k`, `warm_repeats`, `corpus_memory_count`, and
-  label-only candidate IDs are intentionally excluded from retrieval-behavior identity;
-- those measurement protocol fields are frozen independently in the acceptance policy and launch
-  envelope. This allows the retrieval configuration to be fixed **before** blind query text enters
-  the evaluation cycle.
-
-See `docs/PA1_FORMAL_BLIND_ACCEPTANCE.md`.
-
-**No genuine formal held-out run has occurred.** The tooling being CI-green does not constitute
-formal evidence, does not complete PA1, and does not activate production Vector Search.
-
-## Still required before choosing a production embedding/reranker profile
-
-- **physical Windows execution of the prepared open-development Qwen matrix**;
-- actual Windows Python/runtime dependency freeze and machine evidence;
-- actual Qwen English/Japanese/no-instruction quality and latency results;
-- actual allowed-dimension comparison;
-- actual Qwen3-Reranker-0.6B OFF/ON comparison;
-- genuinely held-out private corpus creation outside the tuning workspace;
-- actual two-judge calibration/adjudication and frozen private dataset SHA;
-- tokenizer-aware near-512 / 2k / 8k cases;
-- measured, predeclared Windows CPU/RAM/latency acceptance budgets and warm-repeat protocol;
-- pinned BGE-M3/E5/Nomic/GTE/MiniLM challenger runs;
-- independent evidence review;
-- only after the profile/budgets/held-out corpus are frozen: one sealed formal blind cycle using the
-  launch-envelope protocol.
-
-No production embedding or reranker has been activated.
-
-## Last known good PA1 tooling
-
-- implementation: `6d08616d58d187d65df104bcb82a8705d2fe74aa`
-- exact-SHA Actions: `33227872937`, success
-- job: `99034999663`
-- tests: `447 passed`
-- production `brain_twin/`: unchanged by the formal-blind sealing commit
-
-## Last known good production retrieval core
-
-- implementation: `68ac6e420332bf87feecb47eb32b67cd84bd4016`
-- Windows tests: `321 passed, 1 skipped`
-- exact-SHA Actions: `33033340980`, success
-- Sprint 4D / Phase 4 Vector Retrieval Core: **GO / COMPLETE**
+Review: `docs/reviews/PA1_CHALLENGER_PREP_REVIEW_2026-08-29.md`
+Worklog: `docs/worklogs/2026-08-29-pa1-challenger-prep.md`
+Matrix contract: `docs/PA1_CHALLENGER_MATRIX.md`
 
 ## Next authorized action
 
-On the Windows evaluation machine, sync `brain-twin-dev` and run the prepared **open-development**
-Qwen matrix:
+When a Windows evaluation PC is available, use one clean checkout and run the full open-development matrix:
 
 ```powershell
 git switch brain-twin-dev
 git pull --ff-only origin brain-twin-dev
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\brain-twin-2\scripts\run_pa1_qwen_matrix.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\brain-twin-2\scripts\run_pa1_full_open_matrix.ps1
 ```
 
-After the run, review `matrix_summary.md`, per-slice reports, environment evidence, and failure cases.
-If Qwen remains strong, run BGE-M3 / multilingual-e5 / Nomic / GTE challengers under the same harness
-before freezing the production embedding profile.
+That orchestrates the prepared Qwen matrix and the reviewed standard challengers under one Git/dataset identity and produces a combined open-development summary.
 
-Do **not** run the formal blind cycle yet. First freeze the selected retrieval profile, measured
-Windows runtime budgets, expected warm-repeat protocol, and a genuinely private/adjudicated held-out
-corpus. Do **not** silently declare Production Vector Search active.
+Separately, Nomic/GTE must first use `scripts/smoke_pa1_remote_code_candidate.py` against their pinned local artifacts. Do not add them to normal comparison merely because acquisition succeeded.
 
-Production provider/backend/reranker integration, PA3 FAISS production lifecycle, organizer-LLM
-integration, `ask`, Contradiction Detection, Memory Consolidation, smartphone integration, and
-Phase 5 still require their own evidence/review boundary.
+## Gates after Windows open-development execution
+
+1. Review Qwen English/Japanese/no-instruction results.
+2. Review Qwen allowed-dimension sweep.
+3. Review Qwen reranker OFF/ON on the same first-stage pool.
+4. Compare BGE-M3, E5-base, E5-large-instruct and MiniLM control on the same dataset/evaluator Git SHA.
+5. Run/inspect isolated Nomic/GTE custom-code smoke; explicitly review before any promotion.
+6. Select provisional winner using Japanese retrieval quality plus Windows latency/RSS/disk, not leaderboard rank alone.
+7. Create genuinely private held-out corpus outside the repo, perform independent judging/adjudication, and freeze its SHA.
+8. Predeclare Windows CPU/RAM/latency budgets and warm-repeat protocol.
+9. Freeze selected retrieval configuration and model/custom-code revisions.
+10. Run one sealed formal blind cycle.
+11. Require independent evidence review before PA1 COMPLETE / production profile selection.
+
+## After PA1
+
+- PA2: production embedding provider and accepted reranker integration.
+- PA3: production ANN lifecycle (FAISS HNSW preferred target), stale/update/delete safety, rebuild/recovery, ANN-vs-Exact recall and Windows scale benchmarks.
+- Only after those evidence gates: Production Vector Search activation.
+- Organizer LLM selection/integration remains a separate benchmark problem.
+- `ask`, contradiction detection, memory consolidation, smartphone capture/sync, and later Phase 5 remain future work.
 
 ## Core invariants
 
+- Raw captured input is preserved; AI organization cannot destructively replace it.
 - Markdown/Vault is persistent Memory SOT.
-- Raw captured text is preserved; AI-derived organization cannot destructively replace it.
-- SQLite is rebuildable index/cache; canonical embedding BLOBs remain derived canonical cache.
-- Vector/ANN sidecars are disposable and rebuildable from canonical BLOBs.
-- Organizer LLM, embedding provider, reranker, and ANN backend are independently replaceable.
-- Normal `reindex` remains provider/network-free.
+- SQLite/vector/ANN state is derived and rebuildable.
+- Organizer LLM, embedding provider, reranker and ANN backend remain independently replaceable.
+- Normal `reindex` stays provider/network-free.
 - Tests/evaluation fixtures never touch a real user Vault.
 - Production code must not depend on `brain_twin_eval`.
-- Keep responsibilities separated and handoffs recorded.
+- Do not silently declare Production Vector Search active.
