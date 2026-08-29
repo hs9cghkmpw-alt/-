@@ -145,9 +145,9 @@ Evidence-isolation hardening:
 - exact-SHA Actions run `33223233939`: **success**
 - result: **396 passed**
 
-`scripts/run_pa1_qwen_matrix.ps1` now performs the full open-development sequence from one Windows
-command: environment setup, immutable model acquisition, English/Japanese/no-instruction comparison at
-1024d, winner-only 768/512/256 sweep, deterministic dense winner selection, and Qwen reranker OFF/ON
+`scripts/run_pa1_qwen_matrix.ps1` performs the open-development Windows sequence from one command:
+environment setup, immutable model acquisition, English/Japanese/no-instruction comparison at 1024d,
+winner-only 768/512/256 sweep, deterministic dense winner selection, and Qwen reranker OFF/ON
 comparison on a frozen top-50 pool.
 
 Evidence isolation is enforced:
@@ -160,21 +160,72 @@ Evidence isolation is enforced:
 Review handoff: `docs/reviews/PA1_QWEN_MATRIX_RUNNER_REVIEW_2026-08-29.md`.
 Runbook: `docs/PA1_QWEN_MATRIX_RUNBOOK.md`.
 
+### Formal blind acceptance protocol — GO for tooling; no formal run yet
+
+Latest sealing implementation:
+
+- commit `6d08616d58d187d65df104bcb82a8705d2fe74aa`
+- exact-SHA Actions run `33227872937`: **success**
+- exact job `99034999663`
+- result: **447 passed**
+
+The formal-blind tooling now provides:
+
+- a shared **Formal Config Builder** that freezes behavior-changing retrieval settings before a blind
+  runner/query package is introduced;
+- a **Launch Envelope** binding cycle ID, runner SHA, private source dataset identity, policy SHA,
+  retrieval-config SHA, exact evaluator Git SHA, evaluation `k`, expected warm-repeat count, and an
+  optional model-artifact manifest SHA;
+- an actual Git check before model load: the formal runner resolves `git rev-parse HEAD` itself and
+  requires the tracked worktree to be clean; a caller-supplied SHA is not trusted as evidence;
+- private **Critical Slice Gates** for per-slice Recall@5/MRR@10/nDCG@10/must-hit@5/false-positive@5;
+  the public formal report exposes only critical-rule spec SHA, rule count, and aggregate PASS/FAIL —
+  not slice names, thresholds, or held-out per-slice scores;
+- model-side ranking and private-side scoring remain separated; the model side receives no judgement
+  labels and emits ranking/timing/RSS evidence only;
+- formal acceptance requires the same launch envelope, policy, dataset identity, evaluator SHA,
+  retrieval-config SHA, runtime protocol, and critical-slice attestation.
+
+Important identity split:
+
+- **retrieval behavior SHA** includes model/revision, instruction and its hash, dimension,
+  normalization, document/query template commitments, reranker/base-model contract, and candidate-k;
+- measurement/data-shape fields such as `evaluation_k`, `warm_repeats`, `corpus_memory_count`, and
+  label-only candidate IDs are intentionally excluded from retrieval-behavior identity;
+- those measurement protocol fields are frozen independently in the acceptance policy and launch
+  envelope. This allows the retrieval configuration to be fixed **before** blind query text enters
+  the evaluation cycle.
+
+See `docs/PA1_FORMAL_BLIND_ACCEPTANCE.md`.
+
+**No genuine formal held-out run has occurred.** The tooling being CI-green does not constitute
+formal evidence, does not complete PA1, and does not activate production Vector Search.
+
 ## Still required before choosing a production embedding/reranker profile
 
-- **physical Windows execution of the prepared Qwen matrix**;
+- **physical Windows execution of the prepared open-development Qwen matrix**;
 - actual Windows Python/runtime dependency freeze and machine evidence;
 - actual Qwen English/Japanese/no-instruction quality and latency results;
 - actual allowed-dimension comparison;
 - actual Qwen3-Reranker-0.6B OFF/ON comparison;
-- genuinely held-out blind set outside the tuning workspace;
-- two-judge calibration/adjudication;
+- genuinely held-out private corpus creation outside the tuning workspace;
+- actual two-judge calibration/adjudication and frozen private dataset SHA;
 - tokenizer-aware near-512 / 2k / 8k cases;
-- predeclared Windows CPU/RAM/latency acceptance budgets;
+- measured, predeclared Windows CPU/RAM/latency acceptance budgets and warm-repeat protocol;
 - pinned BGE-M3/E5/Nomic/GTE/MiniLM challenger runs;
-- independent evidence review.
+- independent evidence review;
+- only after the profile/budgets/held-out corpus are frozen: one sealed formal blind cycle using the
+  launch-envelope protocol.
 
 No production embedding or reranker has been activated.
+
+## Last known good PA1 tooling
+
+- implementation: `6d08616d58d187d65df104bcb82a8705d2fe74aa`
+- exact-SHA Actions: `33227872937`, success
+- job: `99034999663`
+- tests: `447 passed`
+- production `brain_twin/`: unchanged by the formal-blind sealing commit
 
 ## Last known good production retrieval core
 
@@ -185,7 +236,8 @@ No production embedding or reranker has been activated.
 
 ## Next authorized action
 
-On the Windows evaluation machine, sync `brain-twin-dev` and run exactly:
+On the Windows evaluation machine, sync `brain-twin-dev` and run the prepared **open-development**
+Qwen matrix:
 
 ```powershell
 git switch brain-twin-dev
@@ -193,14 +245,17 @@ git pull --ff-only origin brain-twin-dev
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\brain-twin-2\scripts\run_pa1_qwen_matrix.ps1
 ```
 
-After the run, review the generated `matrix_summary.md`, per-slice reports, environment evidence, and
-failure cases. If Qwen remains strong, run BGE-M3 / multilingual-e5 / Nomic / GTE challengers under
-the same harness before freezing the production embedding profile.
+After the run, review `matrix_summary.md`, per-slice reports, environment evidence, and failure cases.
+If Qwen remains strong, run BGE-M3 / multilingual-e5 / Nomic / GTE challengers under the same harness
+before freezing the production embedding profile.
 
-Do **not** silently declare Production Vector Search active. Production provider/backend/reranker
-integration, PA3 FAISS production lifecycle, organizer-LLM integration, `ask`, Contradiction
-Detection, Memory Consolidation, smartphone integration, and Phase 5 still require their own
-evidence/review boundary.
+Do **not** run the formal blind cycle yet. First freeze the selected retrieval profile, measured
+Windows runtime budgets, expected warm-repeat protocol, and a genuinely private/adjudicated held-out
+corpus. Do **not** silently declare Production Vector Search active.
+
+Production provider/backend/reranker integration, PA3 FAISS production lifecycle, organizer-LLM
+integration, `ask`, Contradiction Detection, Memory Consolidation, smartphone integration, and
+Phase 5 still require their own evidence/review boundary.
 
 ## Core invariants
 
