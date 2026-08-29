@@ -15,9 +15,11 @@ from brain_twin_eval.formal_config import (  # noqa: E402
     DENSE_PROVIDER_LABEL,
     RERANK_BACKEND_LABEL,
     RERANK_PROVIDER_LABEL,
-    dense_backend_params,
-    rerank_backend_params,
     retrieval_config_mapping,
+)
+from brain_twin_eval.formal_config_code_pin import (  # noqa: E402
+    dense_backend_params_with_code_pin,
+    rerank_backend_params_with_code_pins,
 )
 from brain_twin_eval.privacy_paths import require_outside_repository  # noqa: E402
 
@@ -32,6 +34,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-name", required=True)
     parser.add_argument("--model-revision", required=True)
+    parser.add_argument("--model-code-repo-id")
+    parser.add_argument("--model-code-revision")
     parser.add_argument("--instruction-id", required=True)
     parser.add_argument("--query-template-file")
     parser.add_argument("--document-template-file")
@@ -40,6 +44,8 @@ def main() -> int:
 
     parser.add_argument("--reranker-model-name")
     parser.add_argument("--reranker-model-revision")
+    parser.add_argument("--reranker-code-repo-id")
+    parser.add_argument("--reranker-code-revision")
     parser.add_argument(
         "--reranker-instruction-id",
         default="brain-twin-memory-relevance-v1",
@@ -56,23 +62,17 @@ def main() -> int:
     )
 
     query_template = _read_text(args.query_template_file, "{query}")
-    document_template = _read_text(
-        args.document_template_file, "{document}"
-    )
+    document_template = _read_text(args.document_template_file, "{document}")
 
-    reranker_requested = any(
-        (args.reranker_model_name, args.reranker_model_revision)
-    )
+    reranker_requested = any((args.reranker_model_name, args.reranker_model_revision))
     if reranker_requested:
         if not args.reranker_model_name or not args.reranker_model_revision:
-            raise SystemExit(
-                "reranker model name and revision must be supplied together"
-            )
+            raise SystemExit("reranker model name and revision must be supplied together")
         reranker_instruction = _read_text(
             args.reranker_instruction_file,
             "Given a personal memory retrieval query, identify passages that are relevant to the user's intended recollection.",
         )
-        backend_params = rerank_backend_params(
+        backend_params = rerank_backend_params_with_code_pins(
             base_model_name=args.model_name,
             base_model_revision=args.model_revision,
             base_instruction_id=args.instruction_id,
@@ -81,6 +81,10 @@ def main() -> int:
             base_dimension=args.dimension,
             base_normalized=True,
             candidate_k=args.reranker_candidate_k,
+            base_code_repo_id=args.model_code_repo_id,
+            base_code_revision=args.model_code_revision,
+            reranker_code_repo_id=args.reranker_code_repo_id,
+            reranker_code_revision=args.reranker_code_revision,
         )
         config = retrieval_config_mapping(
             provider_label=RERANK_PROVIDER_LABEL,
@@ -96,9 +100,13 @@ def main() -> int:
         )
         kind = "dense_plus_reranker"
     else:
-        backend_params = dense_backend_params(
+        if args.reranker_code_repo_id or args.reranker_code_revision:
+            raise SystemExit("reranker code pin supplied without a reranker model")
+        backend_params = dense_backend_params_with_code_pin(
             query_template=query_template,
             document_template=document_template,
+            code_repo_id=args.model_code_repo_id,
+            code_revision=args.model_code_revision,
         )
         config = retrieval_config_mapping(
             provider_label=DENSE_PROVIDER_LABEL,
@@ -116,22 +124,19 @@ def main() -> int:
 
     config_sha = retrieval_config_sha256(config)
     payload = {
-        "schema": 1,
+        "schema": 2,
         "kind": kind,
         "retrieval_config_sha256": config_sha,
         "configuration": config,
         "contains_blind_query_text": False,
         "contains_model_local_path": False,
+        "implementation_dependency_bound": any(
+            key.endswith("implementation_dependency") for key in backend_params
+        ),
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            indent=2,
-        )
-        + "\n",
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
     print(f"retrieval config sha256: {config_sha}")
