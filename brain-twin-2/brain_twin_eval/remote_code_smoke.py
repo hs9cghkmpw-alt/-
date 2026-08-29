@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .candidate_catalog import CandidateSpec
-from .resources import read_process_peak_rss_bytes
+from .resources import peak_rss_reading
 
 
 class RemoteCodeSmokeError(RuntimeError):
@@ -174,7 +174,7 @@ def run_remote_code_smoke(
         observed_dimension=len(vector),
         normalized=True,
         elapsed_seconds=elapsed,
-        peak_rss_bytes=read_process_peak_rss_bytes(),
+        peak_rss_bytes=peak_rss_reading().bytes,
         local_files_only=True,
         # A successful smoke is evidence for a later review, never an automatic catalog mutation.
         catalog_status_after_smoke=candidate.runtime_status,
