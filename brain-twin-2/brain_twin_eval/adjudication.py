@@ -90,8 +90,11 @@ def judge_package_from_mapping(raw: Mapping[str, Any]) -> JudgePackage:
         hard_negative = item.get("hard_negative")
         if not isinstance(hard_negative, bool):
             raise AdjudicationError(f"{query_id}.hard_negative must be boolean")
-        if hard_negative and any(grade > 0 for grade in relevance.values()):
+        has_positive = any(grade > 0 for grade in relevance.values())
+        if hard_negative and has_positive:
             raise AdjudicationError(f"{query_id} cannot be hard-negative with positive relevance")
+        if not hard_negative and not has_positive:
+            raise AdjudicationError(f"{query_id} non-hard-negative query must have positive relevance")
         queries.append(
             JudgeQuery(
                 query_id=query_id,
@@ -123,11 +126,7 @@ def compare_judges(a: JudgePackage, b: JudgePackage) -> AgreementSummary:
             for memory_id in sorted(memory_ids)
             if left.relevance.get(memory_id) != right.relevance.get(memory_id)
         }
-        if (
-            relevance_differences
-            or left.must_hit_ids != right.must_hit_ids
-            or left.hard_negative != right.hard_negative
-        ):
+        if relevance_differences or left.must_hit_ids != right.must_hit_ids or left.hard_negative != right.hard_negative:
             disagreements.append(
                 QueryDisagreement(
                     query_id=query_id,
