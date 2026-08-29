@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "candidates": [
+    {
+      "candidate_id": "qwen3-embedding-0.6b",
+      "role": "embedding",
+      "model_name": "Qwen/Qwen3-Embedding-0.6B",
+      "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "enabled": true,
+      "notes": "Preferred target; English/Japanese/no-instruction and dimension sweep are evaluated separately."
+    },
+    {
+      "candidate_id": "qwen3-reranker-0.6b",
+      "role": "reranker",
+      "model_name": "Qwen/Qwen3-Reranker-0.6B",
+      "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+      "enabled": true,
+      "notes": "Preferred reranker target; compare OFF/ON on the same frozen first-stage pool."
+    },
+    {
+      "candidate_id": "bge-m3",
+      "role": "embedding",
+      "model_name": "BAAI/bge-m3",
+      "revision": null,
+      "enabled": true,
+      "notes": "Challenger. Pin a reviewed immutable revision before acquisition or execution."
+    },
+    {
+      "candidate_id": "multilingual-e5-base",
+      "role": "embedding",
+      "model_name": "intfloat/multilingual-e5-base",
+      "revision": null,
+      "enabled": true,
+      "notes": "Challenger. Pin a reviewed immutable revision before acquisition or execution."
+    },
+    {
+      "candidate_id": "multilingual-e5-large-instruct",
+      "role": "embedding",
+      "model_name": "intfloat/multilingual-e5-large-instruct",
+      "revision": null,
+      "enabled": true,
+      "notes": "Challenger. Pin a reviewed immutable revision before acquisition or execution."
+    },
+    {
+      "candidate_id": "nomic-embed-text-v2-moe",
+      "role": "embedding",
+      "model_name": "nomic-ai/nomic-embed-text-v2-moe",
+      "revision": null,
+      "enabled": true,
+      "notes": "Efficiency challenger. Pin a reviewed immutable revision before acquisition or execution."
+    },
+    {
+      "candidate_id": "gte-multilingual-base",
+      "role": "embedding",
+      "model_name": "Alibaba-NLP/gte-multilingual-base",
+      "revision": null,
+      "enabled": true,
+      "notes": "Challenger. Pin a reviewed immutable revision before acquisition or execution."
+    },
+    {
+      "candidate_id": "multilingual-minilm-control",
+      "role": "embedding",
+      "model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "revision": null,
+      "enabled": true,
+      "notes": "Lightweight control, not a presumed production winner."
+    }
+  ]
+}
