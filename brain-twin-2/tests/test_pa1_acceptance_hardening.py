@@ -9,6 +9,7 @@ def _policy():
         "dataset_version": "heldout-v1",
         "dataset_sha256": "a" * 64,
         "evaluator_git_commit": "b" * 40,
+        "expected_retrieval_config_sha256": "c" * 64,
         "minimum_query_count": 1,
         "min_recall_at_5": 0.0,
         "min_mrr_at_10": 0.0,

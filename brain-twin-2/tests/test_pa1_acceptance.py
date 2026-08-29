@@ -5,7 +5,24 @@ from brain_twin_eval.acceptance import (
     evaluate_acceptance,
     policy_from_mapping,
     policy_sha256,
+    retrieval_config_sha256,
 )
+
+
+def _manifest():
+    return {
+        "git_commit": "b" * 40,
+        "provider_label": "sentence_transformers_local_eval",
+        "model_name": "Qwen/Qwen3-Embedding-0.6B",
+        "model_revision": "c" * 40,
+        "instruction_id": "brain-twin-en-v1",
+        "instruction_text_sha256": "d" * 64,
+        "dimension": 1024,
+        "normalized": True,
+        "document_template_version": "1",
+        "backend_label": "evaluation_exact_dense",
+        "backend_params": {"candidate_k": 50},
+    }
 
 
 def _policy(*, warm=0.5, rss=2_000_000_000):
@@ -15,6 +32,7 @@ def _policy(*, warm=0.5, rss=2_000_000_000):
             "dataset_version": "heldout-v1",
             "dataset_sha256": "a" * 64,
             "evaluator_git_commit": "b" * 40,
+            "expected_retrieval_config_sha256": retrieval_config_sha256(_manifest()),
             "minimum_query_count": 40,
             "min_recall_at_5": 0.90,
             "min_mrr_at_10": 0.80,
@@ -30,7 +48,7 @@ def _policy(*, warm=0.5, rss=2_000_000_000):
 
 def _report():
     return {
-        "manifest": {"git_commit": "b" * 40},
+        "manifest": _manifest(),
         "dataset_version": "heldout-v1",
         "dataset_sha256": "a" * 64,
         "judgement_visibility": "held_out",
@@ -75,6 +93,14 @@ def test_formal_acceptance_fails_open_or_unredacted_report() -> None:
     assert {"held_out_judgements", "query_details_redacted"}.issubset(failed)
 
 
+def test_formal_acceptance_fails_if_model_configuration_changes_after_policy_freeze() -> None:
+    report = _report()
+    report["manifest"]["dimension"] = 768
+    decision = evaluate_acceptance(report, _policy(), formal=True)
+    assert decision.status == "fail"
+    assert any(gate.gate == "retrieval_config_sha256" and not gate.passed for gate in decision.gates)
+
+
 def test_draft_policy_blocks_formal_decision_until_runtime_budgets_are_frozen() -> None:
     decision = evaluate_acceptance(_report(), _policy(warm=None, rss=None), formal=True)
     assert decision.status == "blocked"
@@ -85,12 +111,21 @@ def test_policy_hash_is_deterministic() -> None:
     assert policy_sha256(_policy()) == policy_sha256(_policy())
 
 
+def test_retrieval_config_hash_is_deterministic_and_sensitive_to_backend_params() -> None:
+    first = _manifest()
+    second = _manifest()
+    assert retrieval_config_sha256(first) == retrieval_config_sha256(second)
+    second["backend_params"] = {"candidate_k": 100}
+    assert retrieval_config_sha256(first) != retrieval_config_sha256(second)
+
+
 def test_policy_rejects_mutable_or_short_evaluator_commit() -> None:
     raw = {
         "policy_id": "x",
         "dataset_version": "v",
         "dataset_sha256": "a" * 64,
         "evaluator_git_commit": "main",
+        "expected_retrieval_config_sha256": "e" * 64,
         "minimum_query_count": 1,
         "min_recall_at_5": 0.0,
         "min_mrr_at_10": 0.0,
