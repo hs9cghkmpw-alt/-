@@ -1,0 +1,245 @@
+"""Summarize PA1 Qwen open-benchmark reports and select the next dev candidate.
+
+This module is evaluation-only. It never reads a user Vault and must not be used as a
+formal blind-acceptance decision. The committed v2 benchmark has open judgements.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Iterable, Mapping
+
+
+@dataclass(frozen=True)
+class MatrixEntry:
+    candidate_id: str
+    kind: str
+    model_name: str
+    model_revision: str
+    instruction_id: str
+    dimension: int
+    backend_label: str
+    base_candidate_id: str | None
+    recall_at_5: float
+    mrr_at_10: float
+    ndcg_at_10: float
+    must_hit_at_5: float | None
+    false_positive_at_5: float
+    warm_p95_seconds: float | None
+    report_path: str
+
+
+class MatrixSummaryError(ValueError):
+    pass
+
+
+def _number(value: Any, *, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise MatrixSummaryError(f"{field} must be numeric")
+    return float(value)
+
+
+def entry_from_payload(payload: Mapping[str, Any], *, report_path: str) -> MatrixEntry:
+    try:
+        manifest = payload["manifest"]
+        overall = payload["overall"]
+        latency = payload["latency"]
+        backend_label = str(manifest["backend_label"])
+        backend_params = manifest.get("backend_params") or {}
+        recall = overall["recall_at"]
+    except (KeyError, TypeError) as exc:
+        raise MatrixSummaryError(f"malformed evaluation report: {report_path}") from exc
+
+    dimension = manifest.get("dimension")
+    if isinstance(dimension, bool) or not isinstance(dimension, int) or dimension <= 0:
+        raise MatrixSummaryError(f"invalid dimension in {report_path}")
+
+    must_hit_raw = overall.get("must_hit_at_5")
+    must_hit = None if must_hit_raw is None else _number(must_hit_raw, field="must_hit_at_5")
+    warm_p95_raw = (latency.get("warm") or {}).get("p95_seconds")
+    warm_p95 = None if warm_p95_raw is None else _number(warm_p95_raw, field="warm.p95_seconds")
+    kind = "reranked" if backend_label == "evaluation_rerank" else "dense"
+
+    return MatrixEntry(
+        candidate_id=str(manifest["experiment_id"]),
+        kind=kind,
+        model_name=str(manifest["model_name"]),
+        model_revision=str(manifest["model_revision"]),
+        instruction_id=str(manifest["instruction_id"]),
+        dimension=dimension,
+        backend_label=backend_label,
+        base_candidate_id=(
+            str(backend_params["base_candidate_id"])
+            if backend_params.get("base_candidate_id")
+            else None
+        ),
+        recall_at_5=_number(recall["5"], field="recall_at.5"),
+        mrr_at_10=_number(overall["mrr_at_10"], field="mrr_at_10"),
+        ndcg_at_10=_number(overall["ndcg_at_10"], field="ndcg_at_10"),
+        must_hit_at_5=must_hit,
+        false_positive_at_5=_number(overall["false_positive_at_5"], field="false_positive_at_5"),
+        warm_p95_seconds=warm_p95,
+        report_path=report_path,
+    )
+
+
+def _quality_key(entry: MatrixEntry) -> tuple[float, ...]:
+    """Deterministic open-dev ordering; quality first, latency only as late tie-break."""
+    must_hit = -1.0 if entry.must_hit_at_5 is None else entry.must_hit_at_5
+    latency = float("inf") if entry.warm_p95_seconds is None else entry.warm_p95_seconds
+    return (
+        entry.ndcg_at_10,
+        must_hit,
+        entry.mrr_at_10,
+        entry.recall_at_5,
+        -entry.false_positive_at_5,
+        -latency,
+    )
+
+
+def choose_winner(entries: Iterable[MatrixEntry], *, kind: str | None = None) -> MatrixEntry | None:
+    selected = [entry for entry in entries if kind is None or entry.kind == kind]
+    if not selected:
+        return None
+    return max(selected, key=lambda entry: (_quality_key(entry), entry.candidate_id))
+
+
+def summarize_payloads(items: Iterable[tuple[str, Mapping[str, Any]]]) -> dict[str, Any]:
+    entries: list[MatrixEntry] = []
+    dataset_sha: str | None = None
+    dataset_version: str | None = None
+    split: str | None = None
+    judgement_visibility: str | None = None
+
+    for path, payload in items:
+        current_sha = str(payload.get("dataset_sha256", ""))
+        current_version = str(payload.get("dataset_version", ""))
+        current_split = payload.get("split")
+        current_visibility = str(payload.get("judgement_visibility", ""))
+        if not current_sha or not current_version:
+            raise MatrixSummaryError(f"report lacks dataset identity: {path}")
+        if dataset_sha is None:
+            dataset_sha = current_sha
+            dataset_version = current_version
+            split = current_split
+            judgement_visibility = current_visibility
+        elif (
+            current_sha != dataset_sha
+            or current_version != dataset_version
+            or current_split != split
+            or current_visibility != judgement_visibility
+        ):
+            raise MatrixSummaryError("all matrix reports must use the same dataset/split/judgement visibility")
+        entries.append(entry_from_payload(payload, report_path=path))
+
+    if not entries:
+        raise MatrixSummaryError("no evaluation reports found")
+
+    entries.sort(key=lambda entry: entry.candidate_id)
+    dense_winner = choose_winner(entries, kind="dense")
+    overall_winner = choose_winner(entries)
+    return {
+        "schema": 1,
+        "decision_scope": "open-development-only",
+        "formal_blind_acceptance": False,
+        "warning": "Open judgements may be used for iteration but not final production acceptance.",
+        "dataset_version": dataset_version,
+        "dataset_sha256": dataset_sha,
+        "split": split,
+        "judgement_visibility": judgement_visibility,
+        "entry_count": len(entries),
+        "entries": [asdict(entry) for entry in entries],
+        "dense_winner": asdict(dense_winner) if dense_winner else None,
+        "overall_open_winner": asdict(overall_winner) if overall_winner else None,
+        "selection_order": [
+            "nDCG@10",
+            "must-hit@5",
+            "MRR@10",
+            "Recall@5",
+            "lower false-positive@5",
+            "lower warm p95 latency",
+            "candidate_id deterministic tie-break",
+        ],
+    }
+
+
+def collect_reports(root: Path) -> list[tuple[str, Mapping[str, Any]]]:
+    paths = sorted(
+        set(root.rglob("dense_report.json")) | set(root.rglob("reranked_report.json")),
+        key=lambda path: path.as_posix(),
+    )
+    items: list[tuple[str, Mapping[str, Any]]] = []
+    for path in paths:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping):
+            raise MatrixSummaryError(f"report root must be an object: {path}")
+        items.append((path.relative_to(root).as_posix(), payload))
+    return items
+
+
+def summary_markdown(summary: Mapping[str, Any]) -> str:
+    lines = [
+        "# PA1 Qwen Open Matrix Summary",
+        "",
+        "> Development evidence only. The committed open benchmark is not formal blind acceptance.",
+        "",
+        f"- Dataset: `{summary['dataset_version']}` (`{summary['dataset_sha256']}`)",
+        f"- Split: `{summary['split']}`",
+        f"- Reports: {summary['entry_count']}",
+        "",
+        "| Candidate | Kind | Instruction | Dim | Recall@5 | MRR@10 | nDCG@10 | must-hit@5 | FP@5 | warm p95 |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for entry in summary["entries"]:
+        must_hit = "n/a" if entry["must_hit_at_5"] is None else f"{entry['must_hit_at_5']:.4f}"
+        warm = "n/a" if entry["warm_p95_seconds"] is None else f"{entry['warm_p95_seconds']:.4f}s"
+        lines.append(
+            f"| `{entry['candidate_id']}` | {entry['kind']} | `{entry['instruction_id']}` | "
+            f"{entry['dimension']} | {entry['recall_at_5']:.4f} | {entry['mrr_at_10']:.4f} | "
+            f"{entry['ndcg_at_10']:.4f} | {must_hit} | {entry['false_positive_at_5']:.4f} | {warm} |"
+        )
+
+    dense = summary.get("dense_winner")
+    overall = summary.get("overall_open_winner")
+    lines.extend(["", "## Open-development selection", ""])
+    lines.append(
+        "- Dense winner: " + (f"`{dense['candidate_id']}`" if dense else "n/a")
+    )
+    lines.append(
+        "- Overall open winner: " + (f"`{overall['candidate_id']}`" if overall else "n/a")
+    )
+    lines.extend(
+        [
+            "",
+            "Selection priority is nDCG@10, must-hit@5, MRR@10, Recall@5, lower FP@5, then lower warm p95.",
+            "A genuine held-out set and Windows acceptance budgets remain required before production selection.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--out-json", type=Path, required=True)
+    parser.add_argument("--out-md", type=Path, required=True)
+    args = parser.parse_args()
+
+    summary = summarize_payloads(collect_reports(args.root))
+    args.out_json.parent.mkdir(parents=True, exist_ok=True)
+    args.out_md.parent.mkdir(parents=True, exist_ok=True)
+    args.out_json.write_text(
+        json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    args.out_md.write_text(summary_markdown(summary), encoding="utf-8")
+    print(f"dense winner: {summary['dense_winner']['candidate_id'] if summary['dense_winner'] else 'n/a'}")
+    print(f"overall open winner: {summary['overall_open_winner']['candidate_id'] if summary['overall_open_winner'] else 'n/a'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
