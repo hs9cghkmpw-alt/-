@@ -1,4 +1,4 @@
-"""Summarize PA1 Qwen open-benchmark reports and select the next dev candidate.
+"""Summarize PA1 open-benchmark reports and select the next development candidate.
 
 This module is evaluation-only. It never reads a user Vault and must not be used as a
 formal blind-acceptance decision. The committed v2 benchmark has open judgements.
@@ -198,7 +198,7 @@ def collect_reports(root: Path) -> list[tuple[str, Mapping[str, Any]]]:
 
 def summary_markdown(summary: Mapping[str, Any]) -> str:
     lines = [
-        "# PA1 Qwen Open Matrix Summary",
+        "# PA1 Open Matrix Summary",
         "",
         "> Development evidence only. The committed open benchmark is not formal blind acceptance.",
         "",
@@ -207,14 +207,14 @@ def summary_markdown(summary: Mapping[str, Any]) -> str:
         f"- Split: `{summary['split']}`",
         f"- Reports: {summary['entry_count']}",
         "",
-        "| Candidate | Kind | Instruction | Dim | Recall@5 | MRR@10 | nDCG@10 | must-hit@5 | FP@5 | warm p95 |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Candidate | Kind | Model | Instruction | Dim | Recall@5 | MRR@10 | nDCG@10 | must-hit@5 | FP@5 | warm p95 |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for entry in summary["entries"]:
         must_hit = "n/a" if entry["must_hit_at_5"] is None else f"{entry['must_hit_at_5']:.4f}"
         warm = "n/a" if entry["warm_p95_seconds"] is None else f"{entry['warm_p95_seconds']:.4f}s"
         lines.append(
-            f"| `{entry['candidate_id']}` | {entry['kind']} | `{entry['instruction_id']}` | "
+            f"| `{entry['candidate_id']}` | {entry['kind']} | `{entry['model_name']}` | `{entry['instruction_id']}` | "
             f"{entry['dimension']} | {entry['recall_at_5']:.4f} | {entry['mrr_at_10']:.4f} | "
             f"{entry['ndcg_at_10']:.4f} | {must_hit} | {entry['false_positive_at_5']:.4f} | {warm} |"
         )
