@@ -1,0 +1,27 @@
+{
+  "status": "draft",
+  "policy_version": "organizer-acceptance-v1",
+  "evaluator_commit": null,
+  "organizer_config_sha256": null,
+  "thresholds": {
+    "min_schema_valid_rate": null,
+    "min_strict_record_accuracy": null,
+    "min_memory_worthy_f1": null,
+    "min_memory_type_accuracy": null,
+    "min_topics_f1": null,
+    "min_entities_f1": null,
+    "max_entity_hallucination_rate": null,
+    "min_event_date_exact_rate": null,
+    "min_event_date_null_accuracy": null,
+    "max_importance_mae": null,
+    "min_importance_within_one_rate": null,
+    "min_links_f1": null,
+    "max_confidence_brier": null,
+    "max_determinism_mismatch_count": null,
+    "max_warm_p95_ms": null,
+    "max_peak_rss_bytes": null,
+    "max_artifact_disk_bytes": null
+  },
+  "critical_slice_rules": [],
+  "note": "Non-executable draft. Freeze exact evaluator/config and numeric thresholds only after open Windows evidence exists, before any private held-out execution."
+}
