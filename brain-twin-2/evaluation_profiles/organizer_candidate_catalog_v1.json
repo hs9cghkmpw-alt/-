@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "candidates": [
+    {
+      "candidate_id": "qwen3.5-0.8b",
+      "model_name": "Qwen/Qwen3.5-0.8B",
+      "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "license_id": "apache-2.0",
+      "access": "open",
+      "loader": "transformers_multimodal_text_only",
+      "trust_remote_code": false,
+      "runtime_status": "pinned_reference",
+      "parameter_billions": 0.873,
+      "reference_repo_size_gb": 1.77,
+      "notes": "Efficiency-floor candidate. Do not infer organizer quality from size; evaluate schema reliability and Japanese metadata extraction.",
+      "official_source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+    },
+    {
+      "candidate_id": "qwen3.5-2b",
+      "model_name": "Qwen/Qwen3.5-2B",
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+      "license_id": "apache-2.0",
+      "access": "open",
+      "loader": "transformers_multimodal_text_only",
+      "trust_remote_code": false,
+      "runtime_status": "pinned_reference",
+      "parameter_billions": 2.0,
+      "reference_repo_size_gb": 4.57,
+      "notes": "Balanced-size candidate. Provisional candidate only; no production preference until Brain Twin organizer benchmark evidence exists.",
+      "official_source": "https://huggingface.co/Qwen/Qwen3.5-2B"
+    },
+    {
+      "candidate_id": "qwen3.5-4b",
+      "model_name": "Qwen/Qwen3.5-4B",
+      "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+      "license_id": "apache-2.0",
+      "access": "open",
+      "loader": "transformers_multimodal_text_only",
+      "trust_remote_code": false,
+      "runtime_status": "pinned_reference",
+      "parameter_billions": 4.0,
+      "reference_repo_size_gb": 9.34,
+      "notes": "Higher-capacity Qwen3.5 quality target; Windows CPU/RAM cost must be measured rather than assumed acceptable.",
+      "official_source": "https://huggingface.co/Qwen/Qwen3.5-4B"
+    },
+    {
+      "candidate_id": "qwen3-4b-instruct-2507",
+      "model_name": "Qwen/Qwen3-4B-Instruct-2507",
+      "revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+      "license_id": "apache-2.0",
+      "access": "open",
+      "loader": "transformers_causal_lm",
+      "trust_remote_code": false,
+      "runtime_status": "pinned_reference",
+      "parameter_billions": 4.0,
+      "reference_repo_size_gb": 8.06,
+      "notes": "Text-only Qwen control against Qwen3.5. Keep non-thinking/deterministic organizer settings separate from conversational defaults.",
+      "official_source": "https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507"
+    },
+    {
+      "candidate_id": "phi-4-mini-instruct",
+      "model_name": "microsoft/Phi-4-mini-instruct",
+      "revision": "cfbefacb99257ffa30c83adab238a50856ac3083",
+      "license_id": "mit",
+      "access": "open",
+      "loader": "transformers_causal_lm_remote_code",
+      "trust_remote_code": true,
+      "runtime_status": "requires_remote_code_smoke",
+      "parameter_billions": 3.8,
+      "reference_repo_size_gb": 7.69,
+      "notes": "Official usage path enables trust_remote_code. Keep fail-closed until exact-revision offline code smoke passes; smoke never auto-promotes to production.",
+      "official_source": "https://huggingface.co/microsoft/Phi-4-mini-instruct"
+    },
+    {
+      "candidate_id": "gemma-3-4b-it",
+      "model_name": "google/gemma-3-4b-it",
+      "revision": null,
+      "license_id": "gemma",
+      "access": "gated",
+      "loader": "transformers_gemma3_conditional",
+      "trust_remote_code": false,
+      "runtime_status": "research_only_gated",
+      "parameter_billions": 4.0,
+      "reference_repo_size_gb": null,
+      "notes": "Multilingual challenger, but Hugging Face access requires accepting Gemma terms. Keep research-only until license/access and immutable revision are explicitly reviewed.",
+      "official_source": "https://huggingface.co/google/gemma-3-4b-it"
+    }
+  ]
+}
