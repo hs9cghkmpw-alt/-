@@ -7,8 +7,17 @@ import json
 from pathlib import Path
 import sys
 
-from brain_twin_eval.organizer import OrganizerEvaluationError, evaluate_organizer
+from brain_twin_eval.organizer import OrganizerDataset, OrganizerEvaluationError, evaluate_organizer
 from brain_twin_eval.organizer_gold import build_organizer_open_v1
+from brain_twin_eval.organizer_gold_v2 import build_organizer_open_v2
+
+
+def _dataset(version: str) -> OrganizerDataset:
+    if version == "v1":
+        return build_organizer_open_v1()
+    if version == "v2":
+        return build_organizer_open_v2()
+    raise OrganizerEvaluationError(f"unsupported organizer dataset: {version}")
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -70,10 +79,7 @@ def _render_markdown(report: dict[str, object]) -> str:
     ]
     for key in ordered:
         value = overall[key]
-        if isinstance(value, float):
-            rendered = f"{value:.6f}"
-        else:
-            rendered = str(value)
+        rendered = f"{value:.6f}" if isinstance(value, float) else str(value)
         lines.append(f"| `{key}` | {rendered} |")
     invalid = report.get("invalid_sample_ids", [])
     if isinstance(invalid, list):
@@ -83,6 +89,12 @@ def _render_markdown(report: dict[str, object]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--dataset",
+        choices=("v1", "v2"),
+        default="v2",
+        help="open-development dataset; v2 is the current default",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     export_parser = subparsers.add_parser("export-open", help="export model-side open inputs without gold")
@@ -94,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     score_parser.add_argument("--markdown-report", type=Path)
 
     args = parser.parse_args(argv)
-    dataset = build_organizer_open_v1()
+    dataset = _dataset(args.dataset)
 
     try:
         if args.command == "export-open":
