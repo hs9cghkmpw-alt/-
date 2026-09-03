@@ -18,7 +18,7 @@ from brain_twin_eval.organizer_candidates import (  # noqa: E402
     OrganizerCandidateError,
     load_organizer_candidate_catalog,
 )
-from brain_twin_eval.organizer_gold_v2 import build_organizer_open_v2  # noqa: E402
+from brain_twin_eval.organizer_gold_v3 import build_organizer_open_v3  # noqa: E402
 from brain_twin_eval.organizer_local_runtime import (  # noqa: E402
     PIN_MANIFEST,
     TransformersLocalOrganizerGenerator,
@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--candidate-id", action="append", default=[])
     parser.add_argument("--model-root", type=Path, default=default_model_root())
     parser.add_argument("--results-root", type=Path, default=default_results_root())
-    parser.add_argument("--sample-limit", type=int, default=None, help="open smoke only; omit for comparable full v2 run")
+    parser.add_argument("--sample-limit", type=int, default=None, help="open smoke only; omit for comparable full v3 stress run")
     parser.add_argument("--determinism-samples", type=int, default=8)
     parser.add_argument("--determinism-repeats", type=int, default=2)
     parser.add_argument("--max-new-tokens", type=int, default=512)
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         schema_text = args.schema.read_text(encoding="utf-8").strip()
         if not system_prompt or not schema_text:
             raise OrganizerCandidateError("organizer prompt/schema must not be empty")
-        dataset = _dataset_with_limit(build_organizer_open_v2(), args.sample_limit)
+        dataset = _dataset_with_limit(build_organizer_open_v3(), args.sample_limit)
     except (OrganizerCandidateError, OSError) as exc:
         print(f"[NG] {exc}", file=sys.stderr)
         return 2
@@ -259,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
         "dataset_sha256": dataset.canonical_sha256,
         "sample_count": len(dataset.samples),
         "tier": args.tier,
-        "smoke_only": args.sample_limit is not None and args.sample_limit < len(build_organizer_open_v2().samples),
+        "smoke_only": args.sample_limit is not None and args.sample_limit < len(build_organizer_open_v3().samples),
         "machine": machine,
         "candidates": summaries,
         "selection_note": "No automatic production winner. Compare quality, hallucination, determinism, latency, model-load cost, RSS, disk and artifact integrity before freezing acceptance gates.",
