@@ -288,8 +288,8 @@ Rules:
 - Scope: Issue #2で繰り返しSTOP指定された2件だけを修正。Formal Blind判定の誤ready化と、warm ranking driftがあっても候補選定に残れる経路を閉じる。モデル取得・Windows matrix実行・PA2+・本番設定/Vault変更は対象外。
 - Changed: held-out + blindの共通predicateをdataset/run/report/redaction/formal acceptanceへ統一。`EvaluationRun`、report、sealed blind evidenceに`reproducible`/`selection_eligible`を追加し、非ゼロdriftを診断値付きで失格化。matrix winner、paired candidate比較、critical slice、formal acceptance、ANN比較、PowerShell orchestrationをfail-closed化し、policyのdrift許容値を0に固定。
 - Files: `brain_twin_eval/{dataset,runner,report,blind,blind_ranking,acceptance,critical_slice,matrix_summary}.py`、公開API、PA1 PowerShell 3本、関連テスト、`README.md`、`docs/JAPANESE_RETRIEVAL_EVALUATION.md`、`docs/CURRENT_STATE.md`、本WORKLOG。
-- Tests: 変更前 `558 passed`; focused `52 passed`; full local `571 passed`（最終差分後に再実行予定）。実Vaultには触れていない。
-- CI: exact repair SHAのpush後に実行・照合予定。
-- Commit: this commit.
-- Known issues: 修正自体は独立再レビュー前。exact-SHA CI、Critical=0/Major=0判定、Windows実機証拠は未検証。Organizer正式閾値、PA2/PA3、Production Vector Searchも未承認のまま。
-- Next: 最終ローカル全テストとdiff確認後にcommit/pushし、exact-SHA CIを確認して独立レビューへ渡す。Critical/Major=0まではWindows matrixを選定証拠として使わない。
+- Tests: 変更前 `558 passed`; focused `52 passed`; final full local `571 passed in 2.68s`。実Vaultには触れていない。
+- CI: exact repair SHA `f9cb9652afc3f4b1838074091fbad3e510821c76` の GitHub Actions run `33798627068` は **success**; `571 passed in 9.55s`。
+- Commit: `f9cb9652afc3f4b1838074091fbad3e510821c76`。
+- Known issues: 修正自体は独立再レビュー前。Critical=0/Major=0判定、Windows実機証拠は未検証。Organizer正式閾値、PA2/PA3、Production Vector Searchも未承認のまま。
+- Next: exact repair SHAとCI証拠を独立レビューへ渡す。Critical/Major=0まではWindows matrixを実行せず、既存runも選定証拠として使わない。

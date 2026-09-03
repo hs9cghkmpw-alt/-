@@ -17,7 +17,7 @@ Last updated: 2026-09-04
 - Phase 2 — Automatic Memory Worker / Entity / Link generation: **COMPLETE**
 - Phase 3 — Retrieval: **COMPLETE**
 - Phase 4 — Vector Retrieval Core (4A–4D): **GO / COMPLETE**
-- PA1 — Japanese retrieval/model acceptance: **FOCUSED EVIDENCE REPAIR IMPLEMENTED LOCALLY; EXACT-SHA CI / INDEPENDENT RE-REVIEW PENDING**
+- PA1 — Japanese retrieval/model acceptance: **FOCUSED EVIDENCE REPAIR CI-GREEN; INDEPENDENT RE-REVIEW PENDING**
 - Production Vector Search activation: **PENDING**
 
 Phase 4 completion is not production activation. No production embedding provider, reranker, or ANN backend has been activated.
@@ -40,8 +40,9 @@ The organizer LLM remains undecided. Architecture preference never overrides a f
 
 - Starting HEAD for the focused repair: `dae2342e9e3b08316e5fa2b4595ecaaa5affe090`
 - Starting exact-SHA Actions run: `33787710627` — **success**, 558 passed
-- Focused repair local result: **571 passed**
-- Repair commit / exact-SHA Actions run: pending this handoff's commit and push
+- Focused repair commit: `f9cb9652afc3f4b1838074091fbad3e510821c76`
+- Focused repair local result: **571 passed in 2.68s**
+- Focused repair exact-SHA Actions run: `33798627068` — **success**, 571 passed in 9.55s
 - The real Vault, production `brain_twin/`, model artifacts and production embedding configuration were not changed.
 
 ## Active PA1 evidence-integrity gate
@@ -57,8 +58,8 @@ implements both, without starting a model matrix or PA2+ work:
    Reports, sealed blind evidence, open-matrix winner selection, critical-slice gates, formal acceptance
    and paired candidate / ANN comparison fail closed on that state. Formal policy cannot allow a non-zero drift budget.
 
-The implementation is **not self-approved**. PA1 candidate/model selection remains blocked until the
-exact repair SHA has executable green CI and independent review returns Critical=0 / Major=0.
+The implementation is **not self-approved**. Exact-SHA CI is green, but PA1 candidate/model selection
+remains blocked until independent review returns Critical=0 / Major=0.
 
 ## Organizer preparation state
 
@@ -150,10 +151,9 @@ Matrix contract: `docs/PA1_CHALLENGER_MATRIX.md`
 
 ## Next authorized action
 
-1. Commit and push only this focused two-Major repair.
-2. Verify GitHub Actions against the exact pushed repair SHA.
-3. Route that exact SHA and CI evidence to independent review.
-4. Only after Critical=0 / Major=0 may the prepared Windows open-development matrix be used for
+1. Route repair SHA `f9cb9652afc3f4b1838074091fbad3e510821c76` and exact-SHA Actions run
+   `33798627068` to independent review.
+2. Only after Critical=0 / Major=0 may the prepared Windows open-development matrix be used for
    candidate selection. Runs made earlier remain diagnostic only.
 
 Do not start the full Windows matrix, model selection/freeze, PA2/PA3, production activation, `ask`,

@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: **execution plan / evidence contract; execution routing PAUSED pending PA1 focused-repair exact-SHA CI and independent Critical=0/Major=0 re-review**. This document does not claim that Windows model execution has already happened.
+Status: **execution plan / evidence contract; execution routing PAUSED pending PA1 focused-repair independent Critical=0/Major=0 re-review**. Focused-repair commit `f9cb9652afc3f4b1838074091fbad3e510821c76` has exact-SHA green CI (run `33798627068`, 571 passed). This document does not claim that Windows model execution has already happened.
 
 The stages below remain the intended order after that gate clears. They are not current authorization to
 run the full Retrieval/Organizer matrix or select/freeze a model. `docs/CURRENT_STATE.md` is the live routing source.
@@ -73,8 +73,8 @@ Organizer の最初の基準実装は Transformers CPU / quantization=none。こ
 
 ### Stage実行前の外部レビューgate
 
-Retrieval評価のFormal Blind誤ready化とranking drift選定経路に対するfocused repairが、
-exact-SHA CI成功かつ独立レビューCritical=0/Major=0になるまでは、以下を実行しても
+Retrieval評価のFormal Blind誤ready化とranking drift選定経路に対するfocused repairは
+exact-SHA CI成功済み。独立レビューCritical=0/Major=0になるまでは、以下を実行しても
 **診断以外には使えない**。現時点では新規matrix実行自体を停止し、review handoffを優先する。
 
 ### Stage 0 — Windows Evidence Preconditions

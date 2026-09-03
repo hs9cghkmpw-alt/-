@@ -1,6 +1,6 @@
 # PA1 — Japanese Retrieval Evaluation Harness
 
-Status: **focused evidence-integrity repair implemented; exact-SHA CI and independent re-review pending**
+Status: **focused evidence-integrity repair CI-green; independent re-review pending**
 
 Date: 2026-08-29
 
@@ -202,7 +202,8 @@ reranking cannot recover it.
 
 ## Remaining before production selection
 
-- exact-SHA CI and independent Critical/Major=0 review of the focused evidence-integrity repair;
+- independent Critical/Major=0 review of focused-repair commit
+  `f9cb9652afc3f4b1838074091fbad3e510821c76` (exact-SHA Actions run `33798627068`: success, 571 passed);
 - genuinely held-out blind judgements;
 - two-judge calibration/adjudication;
 - tokenizer-aware boundary cases;

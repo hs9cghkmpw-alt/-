@@ -4,7 +4,8 @@ Verdict at review time: **GO for hardened Organizer Windows evidence execution; 
 
 Current routing note: this implementation-side Organizer verdict does not override the later PA1
 evidence-integrity STOP. Full Windows matrix/selection execution is paused until the focused PA1 repair
-has exact-SHA green CI and independent Critical=0/Major=0 re-review. See `docs/CURRENT_STATE.md`.
+has independent Critical=0/Major=0 re-review. The focused repair's exact-SHA CI is already green
+(`f9cb9652afc3f4b1838074091fbad3e510821c76`, run `33798627068`, 571 passed). See `docs/CURRENT_STATE.md`.
 
 Review type: implementation-side/self-review. This is not the independent final acceptance review.
 
