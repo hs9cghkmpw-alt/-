@@ -118,7 +118,7 @@ def _metric_value(metrics: AggregateMetrics, metric: str) -> float | None:
 
 
 def evaluate_critical_slices(run: EvaluationRun, rules: Sequence[CriticalSliceRule]) -> CriticalSliceSummary:
-    passed = True
+    passed = run.selection_eligible
     for rule in rules:
         metrics = run.per_slice.get(rule.slice_tag)
         if metrics is None or metrics.query_count <= 0:

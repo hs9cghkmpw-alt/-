@@ -31,6 +31,15 @@ class DatasetValidationError(ValueError):
     pass
 
 
+def is_formal_blind_run(judgement_visibility: str, split: str | None) -> bool:
+    """Return whether one evaluated run has formal held-out blind semantics.
+
+    Visibility alone is not sufficient: a held-out development or all-split run
+    must never be shaped like formal blind acceptance evidence.
+    """
+    return judgement_visibility == "held_out" and split == "blind"
+
+
 @dataclass(frozen=True)
 class EvaluationMemory:
     memory_id: str
@@ -70,7 +79,12 @@ class EvaluationDataset:
 
     @property
     def acceptance_blind_ready(self) -> bool:
-        return self.judgement_visibility == "held_out"
+        dataset_split = (
+            "blind"
+            if self.queries and all(query.split == "blind" for query in self.queries)
+            else None
+        )
+        return is_formal_blind_run(self.judgement_visibility, dataset_split)
 
     def queries_for_split(self, split: str | None) -> tuple[EvaluationQuery, ...]:
         if split is None:

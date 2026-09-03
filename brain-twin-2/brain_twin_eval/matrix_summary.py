@@ -28,6 +28,9 @@ class MatrixEntry:
     must_hit_at_5: float | None
     false_positive_at_5: float
     warm_p95_seconds: float | None
+    warm_rank_drift_count: int
+    reproducible: bool
+    selection_eligible: bool
     report_path: str
 
 
@@ -39,6 +42,12 @@ def _number(value: Any, *, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise MatrixSummaryError(f"{field} must be numeric")
     return float(value)
+
+
+def _boolean(value: Any, *, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise MatrixSummaryError(f"{field} must be boolean")
+    return value
 
 
 def entry_from_payload(payload: Mapping[str, Any], *, report_path: str) -> MatrixEntry:
@@ -60,6 +69,26 @@ def entry_from_payload(payload: Mapping[str, Any], *, report_path: str) -> Matri
     must_hit = None if must_hit_raw is None else _number(must_hit_raw, field="must_hit_at_5")
     warm_p95_raw = (latency.get("warm") or {}).get("p95_seconds")
     warm_p95 = None if warm_p95_raw is None else _number(warm_p95_raw, field="warm.p95_seconds")
+    drift = latency.get("warm_rank_drift_count")
+    if isinstance(drift, bool) or not isinstance(drift, int) or drift < 0:
+        raise MatrixSummaryError(
+            f"warm_rank_drift_count must be a non-negative integer in {report_path}"
+        )
+    reproducible = _boolean(
+        payload.get("reproducible"), field=f"reproducible in {report_path}"
+    )
+    selection_eligible = _boolean(
+        payload.get("selection_eligible"),
+        field=f"selection_eligible in {report_path}",
+    )
+    if reproducible != (drift == 0):
+        raise MatrixSummaryError(
+            f"reproducible does not match warm ranking drift in {report_path}"
+        )
+    if selection_eligible and not reproducible:
+        raise MatrixSummaryError(
+            f"non-reproducible report cannot be selection eligible: {report_path}"
+        )
     kind = "reranked" if backend_label == "evaluation_rerank" else "dense"
 
     return MatrixEntry(
@@ -81,6 +110,9 @@ def entry_from_payload(payload: Mapping[str, Any], *, report_path: str) -> Matri
         must_hit_at_5=must_hit,
         false_positive_at_5=_number(overall["false_positive_at_5"], field="false_positive_at_5"),
         warm_p95_seconds=warm_p95,
+        warm_rank_drift_count=drift,
+        reproducible=reproducible,
+        selection_eligible=selection_eligible,
         report_path=report_path,
     )
 
@@ -100,7 +132,11 @@ def _quality_key(entry: MatrixEntry) -> tuple[float, ...]:
 
 
 def choose_winner(entries: Iterable[MatrixEntry], *, kind: str | None = None) -> MatrixEntry | None:
-    selected = [entry for entry in entries if kind is None or entry.kind == kind]
+    selected = [
+        entry
+        for entry in entries
+        if entry.selection_eligible and (kind is None or entry.kind == kind)
+    ]
     if not selected:
         return None
     return max(selected, key=lambda entry: (_quality_key(entry), entry.candidate_id))
@@ -167,6 +203,12 @@ def summarize_payloads(items: Iterable[tuple[str, Mapping[str, Any]]]) -> dict[s
         "split": split,
         "judgement_visibility": judgement_visibility,
         "entry_count": len(entries),
+        "selection_eligible_entry_count": sum(
+            1 for entry in entries if entry.selection_eligible
+        ),
+        "selection_ineligible_candidates": [
+            entry.candidate_id for entry in entries if not entry.selection_eligible
+        ],
         "entries": [asdict(entry) for entry in entries],
         "dense_winner": asdict(dense_winner) if dense_winner else None,
         "overall_open_winner": asdict(overall_winner) if overall_winner else None,
@@ -207,14 +249,14 @@ def summary_markdown(summary: Mapping[str, Any]) -> str:
         f"- Split: `{summary['split']}`",
         f"- Reports: {summary['entry_count']}",
         "",
-        "| Candidate | Kind | Model | Instruction | Dim | Recall@5 | MRR@10 | nDCG@10 | must-hit@5 | FP@5 | warm p95 |",
-        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Candidate | Kind | Eligible | Reproducible | Model | Instruction | Dim | Recall@5 | MRR@10 | nDCG@10 | must-hit@5 | FP@5 | warm p95 |",
+        "|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for entry in summary["entries"]:
         must_hit = "n/a" if entry["must_hit_at_5"] is None else f"{entry['must_hit_at_5']:.4f}"
         warm = "n/a" if entry["warm_p95_seconds"] is None else f"{entry['warm_p95_seconds']:.4f}s"
         lines.append(
-            f"| `{entry['candidate_id']}` | {entry['kind']} | `{entry['model_name']}` | `{entry['instruction_id']}` | "
+            f"| `{entry['candidate_id']}` | {entry['kind']} | {entry['selection_eligible']} | {entry['reproducible']} | `{entry['model_name']}` | `{entry['instruction_id']}` | "
             f"{entry['dimension']} | {entry['recall_at_5']:.4f} | {entry['mrr_at_10']:.4f} | "
             f"{entry['ndcg_at_10']:.4f} | {must_hit} | {entry['false_positive_at_5']:.4f} | {warm} |"
         )
@@ -228,6 +270,7 @@ def summary_markdown(summary: Mapping[str, Any]) -> str:
         [
             "",
             "Selection priority is nDCG@10, must-hit@5, MRR@10, Recall@5, lower FP@5, then lower warm p95.",
+            "Reports with ranking drift are retained for diagnosis but excluded from every winner selection.",
             "A genuine held-out set and Windows acceptance budgets remain required before production selection.",
             "",
         ]

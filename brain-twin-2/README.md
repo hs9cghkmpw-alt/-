@@ -154,7 +154,7 @@ brain-twin-2/
 │  ├ vector_search.py     # Sprint 4C: Vector Primary Search + availability gate
 │  ├ hybrid_search.py     # Sprint 4C: Hybrid Primary Search(Weighted RRF)
 │  └ cli.py               # argparseによるコマンド定義
-├ tests/                  # pytest (298 tests)
+├ tests/                  # pytest full suite (正確な件数・CIはdocs/CURRENT_STATE.md参照)
 ├ scripts/setup.ps1
 ├ vault/                  # 実際のVault(Git管理外、実行時に自動生成)
 └ data/                   # SQLite index(Git管理外)
@@ -718,6 +718,25 @@ draftであり、provider/backend実装やproduction activationを許可・確�
 
 production embedding providerと`SqliteVecBackend`本番adapterは引き続き未実装であり、
 上記のいずれも「production Vector Search性能/完了」を意味しない。
+
+### PA1評価証拠のfail-closed契約
+
+日本語検索モデルの比較結果を、見た目だけ整った無効な証拠として採用しないため、
+PA1評価系は次の契約を共有する。
+
+- Formal Blindとして扱えるのは、共通predicateが
+  `judgement_visibility == "held_out"` **かつ** `split == "blind"` を満たすと判定したrunだけ。
+  held-outでも`dev`または全split(`split=None`)のrunはFormal Blind-readyではなく、
+  query/slice情報もFormal Blindとしてredactしない。
+- cold rankingとwarm repeatのlogical Memory ID順が1回でも変わったrunは、drift件数を残したまま
+  `reproducible=false` / `selection_eligible=false` とする。品質値は診断用に保持するが、
+  open matrixのwinner選定、paired candidate比較、critical-slice gate、formal acceptance、ANN比較には使用できない。
+- report・sealed blind evidence・matrix summaryは上記typed stateを必須項目として検証する。
+  driftがあるのにeligibleと偽装した証拠、またはtyped stateを欠く旧形式の証拠はfail-closedで拒否する。
+- formal policyの`max_warm_rank_drift_count`は`0`以外を許可しない。
+
+この契約の実装・CI成功だけではPA1モデル選定の再開を自己承認しない。独立レビューで
+Critical/Majorが0になった後にのみ、準備済みWindows open-development matrixを選定証拠として使う。
 
 ### 次にやるべきPhase
 

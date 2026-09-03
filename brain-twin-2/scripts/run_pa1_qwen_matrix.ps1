@@ -160,6 +160,9 @@ foreach ($instructionId in @("qwen3-brain-twin-en-v1", "qwen3-brain-twin-ja-v1",
     Invoke-DenseCandidate -Tag $profile.Tag -InstructionId $instructionId -TemplateFile $profile.File -Dimension 1024
 }
 $summary = Write-MatrixSummary
+if ($null -eq $summary.dense_winner) {
+    throw "No selection-eligible dense candidate. Inspect ranking drift in matrix_summary.md."
+}
 $instructionWinnerId = [string]$summary.dense_winner.instruction_id
 if (-not $Profiles.ContainsKey($instructionWinnerId)) {
     throw "unexpected instruction winner: $instructionWinnerId"
@@ -172,6 +175,9 @@ foreach ($dimension in @(768, 512, 256)) {
     Invoke-DenseCandidate -Tag $winnerProfile.Tag -InstructionId $instructionWinnerId -TemplateFile $winnerProfile.File -Dimension $dimension
 }
 $summary = Write-MatrixSummary
+if ($null -eq $summary.dense_winner) {
+    throw "No selection-eligible dense candidate after dimension sweep. Inspect ranking drift."
+}
 $bestDense = $summary.dense_winner
 $bestDimension = [int]$bestDense.dimension
 Write-Host "Dense winner after dimension sweep (open dev): $($bestDense.candidate_id)"
@@ -210,6 +216,9 @@ foreach ($name in @("dense_report.json", "dense_report.md", "dense_manifest.json
     if (Test-Path $path) { Remove-Item $path -Force }
 }
 $summary = Write-MatrixSummary
+if ($null -eq $summary.dense_winner -or $null -eq $summary.overall_open_winner) {
+    throw "No selection-eligible final winner. Drifted reports remain diagnostic only."
+}
 
 Write-Host "`n== PA1 open matrix complete =="
 Write-Host "Dense winner: $($summary.dense_winner.candidate_id)"

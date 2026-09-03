@@ -76,6 +76,9 @@ def _report():
         "dataset_sha256": "a" * 64,
         "judgement_visibility": "held_out",
         "split": "blind",
+        "acceptance_blind_ready": True,
+        "reproducible": True,
+        "selection_eligible": True,
         "query_details_redacted": True,
         "overall": {
             "query_count": 40,
@@ -126,6 +129,7 @@ def test_formal_acceptance_fails_quality_regression() -> None:
 def test_formal_acceptance_fails_open_or_unredacted_report() -> None:
     report = _report()
     report["judgement_visibility"] = "open"
+    report["acceptance_blind_ready"] = False
     report["query_details_redacted"] = False
     decision = evaluate_acceptance(report, _policy(), formal=True)
     assert decision.status == "fail"
@@ -133,6 +137,32 @@ def test_formal_acceptance_fails_open_or_unredacted_report() -> None:
     assert {
         "held_out_judgements",
         "query_details_redacted",
+    }.issubset(failed)
+
+
+def test_formal_acceptance_fails_non_blind_held_out_report() -> None:
+    report = _report()
+    report["split"] = "dev"
+    report["acceptance_blind_ready"] = False
+    report["query_details_redacted"] = False
+    decision = evaluate_acceptance(report, _policy(), formal=True)
+    failed = {gate.gate for gate in decision.gates if not gate.passed}
+    assert {"acceptance_blind_ready", "blind_split", "query_details_redacted"}.issubset(
+        failed
+    )
+
+
+def test_ranking_drift_is_selection_ineligible_even_with_quality_pass() -> None:
+    report = _report()
+    report["latency"]["warm_rank_drift_count"] = 1
+    report["reproducible"] = False
+    report["selection_eligible"] = False
+    decision = evaluate_acceptance(report, _policy(), formal=True)
+    failed = {gate.gate for gate in decision.gates if not gate.passed}
+    assert {
+        "warm_rank_drift_count",
+        "reproducible",
+        "selection_eligible",
     }.issubset(failed)
 
 
@@ -181,6 +211,33 @@ def test_draft_policy_blocks_formal_decision_until_runtime_budgets_are_frozen() 
 
 def test_policy_hash_is_deterministic() -> None:
     assert policy_sha256(_policy()) == policy_sha256(_policy())
+
+
+def test_policy_cannot_allow_nonzero_ranking_drift() -> None:
+    raw = {
+        "policy_id": "formal-v1",
+        "dataset_version": "heldout-v1",
+        "dataset_sha256": "a" * 64,
+        "evaluator_git_commit": "b" * 40,
+        "expected_retrieval_config_sha256": "c" * 64,
+        "minimum_query_count": 1,
+        "expected_warm_repeats": 1,
+        "min_recall_at_5": 0.0,
+        "min_mrr_at_10": 0.0,
+        "min_ndcg_at_10": 0.0,
+        "min_must_hit_at_5": 0.0,
+        "max_false_positive_at_5": 1.0,
+        "max_warm_p95_seconds": 1.0,
+        "max_peak_rss_after_bytes": 1,
+        "max_warm_rank_drift_count": 1,
+        "critical_slice_rules": [],
+    }
+    try:
+        policy_from_mapping(raw)
+    except AcceptancePolicyError as exc:
+        assert "must be 0" in str(exc)
+    else:
+        raise AssertionError("expected AcceptancePolicyError")
 
 
 def test_retrieval_config_hash_ignores_measurement_fields_but_tracks_behavior() -> None:

@@ -1,6 +1,10 @@
 # Organizer Pre-Windows Gap Review — 2026-09-04
 
-Verdict: **GO for hardened Windows evidence execution; NEEDS REAL MACHINE EVIDENCE before any model-selection claim.**
+Verdict at review time: **GO for hardened Organizer Windows evidence execution; NEEDS REAL MACHINE EVIDENCE before any model-selection claim.**
+
+Current routing note: this implementation-side Organizer verdict does not override the later PA1
+evidence-integrity STOP. Full Windows matrix/selection execution is paused until the focused PA1 repair
+has exact-SHA green CI and independent Critical=0/Major=0 re-review. See `docs/CURRENT_STATE.md`.
 
 Review type: implementation-side/self-review. This is not the independent final acceptance review.
 
@@ -51,7 +55,7 @@ Rationale: a quality/latency number without exact code and machine context is no
 
 The existing open runtime aggregate includes per-sample median/p95 but is not yet the final Formal Blind timing contract. Formal Blind already distinguishes first-call and warm latency. Windows open results should therefore be treated as development diagnostics, while final resource gates use the frozen formal protocol.
 
-### Stress corpus is incomplete
+### Stress corpus status after this review
 
 Open-v2 covers relative dates, negation, undecided states, attribution, multiple dates, link hard negatives and other structured cases, but still lacks sufficient:
 
@@ -62,7 +66,8 @@ Open-v2 covers relative dates, negation, undecided states, attribution, multiple
 - typo/abbreviation;
 - multi-intent and pronoun ambiguity.
 
-These must be added as open-development stress slices before final organizer acceptance.
+These were subsequently added in open-v3 (48 additional cases across 12 stress slices). They remain
+synthetic/open and still require real Windows execution; they are not Formal Blind evidence.
 
 ### Reference runtime is not production runtime
 

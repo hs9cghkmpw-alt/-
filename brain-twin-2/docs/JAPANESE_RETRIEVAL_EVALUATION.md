@@ -1,6 +1,6 @@
 # PA1 — Japanese Retrieval Evaluation Harness
 
-Status: **harness self-review GO; open benchmark expansion in progress; formal held-out acceptance still pending**
+Status: **focused evidence-integrity repair implemented; exact-SHA CI and independent re-review pending**
 
 Date: 2026-08-29
 
@@ -43,6 +43,10 @@ Each Memory contains stable `memory_id`, `title`, `content`, `language_tags`, `l
 Validation rejects duplicate IDs, broken references, invalid grades/splits, positive relevance to
 inactive Memories, invalid must-hit references, and missing required slices. The canonical dataset
 SHA-256 includes judgements and `judgement_visibility`.
+
+One authoritative formal-blind predicate requires both `judgement_visibility = held_out` and the
+evaluated `split = blind`. Held-out `dev` or all-split runs are not acceptance-blind-ready and must
+not be routed as formal evidence.
 
 ## Dataset generations
 
@@ -133,6 +137,12 @@ nearest-rank p95, max, warm ranking-order drift count, and best-effort process p
 Windows peak RSS uses `GetProcessMemoryInfo`; POSIX uses `getrusage`. Missing RSS telemetry never
 invalidates a quality run.
 
+Any non-zero warm logical-ID ranking drift makes the run `reproducible = false` and
+`selection_eligible = false`. The first-call quality metrics and exact drift count remain available
+for diagnosis, but matrix winner selection, critical-slice acceptance, formal acceptance, and
+paired candidate / ANN-vs-Exact selection comparisons reject the run. Formal policies cannot permit a non-zero drift
+budget.
+
 ## Runner and adapters
 
 `EvaluationRetriever` remains:
@@ -192,6 +202,7 @@ reranking cannot recover it.
 
 ## Remaining before production selection
 
+- exact-SHA CI and independent Critical/Major=0 review of the focused evidence-integrity repair;
 - genuinely held-out blind judgements;
 - two-judge calibration/adjudication;
 - tokenizer-aware boundary cases;

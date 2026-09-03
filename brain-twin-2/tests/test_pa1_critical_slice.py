@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from brain_twin_eval.critical_slice import (
     CriticalSliceError,
     evaluate_critical_slices,
@@ -31,6 +33,8 @@ def _run():
         queries=(),
         overall=_aggregate(),
         per_slice={"semantic_only": _aggregate(ndcg=0.88), "hard_negative": _aggregate(fp=0.05)},
+        reproducible=True,
+        selection_eligible=True,
     )
 
 
@@ -69,16 +73,35 @@ def test_critical_slice_failure_is_only_exposed_as_boolean() -> None:
         queries=run.queries,
         overall=run.overall,
         per_slice={"semantic_only": _aggregate(ndcg=0.4), "hard_negative": _aggregate(fp=0.05)},
+        reproducible=True,
+        selection_eligible=True,
     )
     payload = summary_payload(evaluate_critical_slices(run, rules))
     assert payload["all_passed"] is False
     assert "0.4" not in str(payload)
 
 
+def test_selection_ineligible_run_cannot_pass_critical_slice_gate() -> None:
+    rules = rules_from_policy_mapping(_policy())
+    run = replace(_run(), reproducible=False, selection_eligible=False)
+    summary = evaluate_critical_slices(run, rules)
+    assert summary.all_passed is False
+
+
 def test_missing_critical_slice_fails_closed() -> None:
     rules = rules_from_policy_mapping(_policy())
     run = _run()
-    run = EvaluationRun(run.dataset_version, run.dataset_sha256, run.judgement_visibility, run.split, (), run.overall, {"semantic_only": _aggregate()})
+    run = EvaluationRun(
+        run.dataset_version,
+        run.dataset_sha256,
+        run.judgement_visibility,
+        run.split,
+        (),
+        run.overall,
+        {"semantic_only": _aggregate()},
+        True,
+        True,
+    )
     try:
         evaluate_critical_slices(run, rules)
     except CriticalSliceError as exc:

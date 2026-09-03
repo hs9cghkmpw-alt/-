@@ -20,6 +20,9 @@ def _payload(
     must_hit: float | None = 0.9,
     fp5: float = 0.2,
     warm_p95: float | None = 0.3,
+    drift: int = 0,
+    reproducible: bool = True,
+    selection_eligible: bool = True,
     dataset_sha: str = "abc",
     git_commit: str = "1" * 40,
 ) -> dict:
@@ -42,6 +45,8 @@ def _payload(
         "dataset_sha256": dataset_sha,
         "judgement_visibility": "open",
         "split": "dev",
+        "reproducible": reproducible,
+        "selection_eligible": selection_eligible,
         "overall": {
             "recall_at": {"1": 0.4, "3": 0.7, "5": recall5, "10": 1.0},
             "mrr_at_10": mrr,
@@ -49,7 +54,10 @@ def _payload(
             "must_hit_at_5": must_hit,
             "false_positive_at_5": fp5,
         },
-        "latency": {"warm": {"p95_seconds": warm_p95}},
+        "latency": {
+            "warm": {"p95_seconds": warm_p95},
+            "warm_rank_drift_count": drift,
+        },
     }
 
 
@@ -78,6 +86,53 @@ def test_winner_prioritizes_ndcg_before_latency() -> None:
         _payload(experiment_id="better", ndcg=0.71, warm_p95=5.0), report_path="better.json"
     )
     assert choose_winner([fast, better]).candidate_id == "better"
+
+
+def test_drifted_candidate_is_retained_but_cannot_win() -> None:
+    stable = entry_from_payload(
+        _payload(experiment_id="stable", ndcg=0.70), report_path="stable.json"
+    )
+    drifted = entry_from_payload(
+        _payload(
+            experiment_id="drifted",
+            ndcg=0.99,
+            drift=1,
+            reproducible=False,
+            selection_eligible=False,
+        ),
+        report_path="drifted.json",
+    )
+    assert choose_winner([stable, drifted]).candidate_id == "stable"
+    summary = summarize_payloads(
+        [
+            ("stable.json", _payload(experiment_id="stable", ndcg=0.70)),
+            (
+                "drifted.json",
+                _payload(
+                    experiment_id="drifted",
+                    ndcg=0.99,
+                    drift=1,
+                    reproducible=False,
+                    selection_eligible=False,
+                ),
+            ),
+        ]
+    )
+    assert summary["selection_ineligible_candidates"] == ["drifted"]
+    assert summary["overall_open_winner"]["candidate_id"] == "stable"
+
+
+def test_all_ineligible_candidates_produce_no_winner() -> None:
+    payload = _payload(
+        experiment_id="drifted",
+        drift=1,
+        reproducible=False,
+        selection_eligible=False,
+    )
+    summary = summarize_payloads([("drifted.json", payload)])
+    assert summary["selection_eligible_entry_count"] == 0
+    assert summary["dense_winner"] is None
+    assert summary["overall_open_winner"] is None
 
 
 def test_winner_uses_must_hit_then_mrr_as_tiebreaks() -> None:

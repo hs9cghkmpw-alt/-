@@ -43,7 +43,7 @@ def _latency_summary(values: Sequence[float]) -> dict[str, float | int | None]:
 
 
 def _redact_query_details(run: EvaluationRun) -> bool:
-    return run.split == "blind" and run.judgement_visibility == "held_out"
+    return run.acceptance_blind_ready
 
 
 def _validate_manifest_run(run: EvaluationRun, manifest: ExperimentManifest) -> None:
@@ -136,8 +136,10 @@ def report_payload(run: EvaluationRun, manifest: ExperimentManifest) -> dict[str
         "dataset_version": run.dataset_version,
         "dataset_sha256": run.dataset_sha256,
         "judgement_visibility": run.judgement_visibility,
-        "acceptance_blind_ready": run.judgement_visibility == "held_out",
+        "acceptance_blind_ready": run.acceptance_blind_ready,
         "split": run.split,
+        "reproducible": run.reproducible,
+        "selection_eligible": run.selection_eligible,
         "query_details_redacted": redact,
         "per_slice_redacted": redact,
         "overall": _aggregate_to_dict(run.overall),
@@ -199,15 +201,24 @@ def report_markdown(run: EvaluationRun, manifest: ExperimentManifest) -> str:
         f"- Dataset: `{manifest.dataset_version}` (`{manifest.dataset_sha256}`)",
         f"- Judgements: `{run.judgement_visibility}`",
         f"- Split: `{run.split or 'all'}`",
+        f"- Reproducible: `{'yes' if run.reproducible else 'no'}`",
+        f"- Selection eligible: `{'yes' if run.selection_eligible else 'no'}`",
         f"- Provider/model: `{manifest.provider_label}` / `{manifest.model_name}`",
         f"- Backend: `{manifest.backend_label}`",
         f"- Queries: {overall.query_count}",
         "",
     ]
-    if run.split == "blind" and run.judgement_visibility != "held_out":
+    if run.split == "blind" and not run.acceptance_blind_ready:
         lines.extend(
             [
                 "> WARNING: this blind-labelled split has open judgements and is not valid as a formal held-out acceptance run.",
+                "",
+            ]
+        )
+    if not run.selection_eligible:
+        lines.extend(
+            [
+                "> WARNING: ranking drift made this run selection-ineligible; quality metrics are diagnostic only.",
                 "",
             ]
         )

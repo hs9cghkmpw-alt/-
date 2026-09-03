@@ -4,7 +4,12 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Mapping, Protocol, Sequence
 
-from .dataset import EvaluationDataset, EvaluationQuery, dataset_sha256
+from .dataset import (
+    EvaluationDataset,
+    EvaluationQuery,
+    dataset_sha256,
+    is_formal_blind_run,
+)
 from .metrics import QueryMetrics, ann_recall_at_k, compute_query_metrics, mean
 from .resources import PeakRssReading, peak_rss_reading
 
@@ -51,9 +56,35 @@ class EvaluationRun:
     queries: tuple[EvaluatedQuery, ...]
     overall: AggregateMetrics
     per_slice: Mapping[str, AggregateMetrics]
+    reproducible: bool
+    selection_eligible: bool
     peak_rss_before_bytes: int | None = None
     peak_rss_after_bytes: int | None = None
     peak_rss_method: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reproducible, bool):
+            raise ValueError("reproducible must be boolean")
+        if not isinstance(self.selection_eligible, bool):
+            raise ValueError("selection_eligible must be boolean")
+        for query in self.queries:
+            if (
+                isinstance(query.warm_rank_drift_count, bool)
+                or not isinstance(query.warm_rank_drift_count, int)
+                or query.warm_rank_drift_count < 0
+            ):
+                raise ValueError("warm_rank_drift_count must be a non-negative integer")
+            if self.split is not None and query.split != self.split:
+                raise ValueError("evaluation query split does not match run split")
+        has_drift = any(query.warm_rank_drift_count > 0 for query in self.queries)
+        if has_drift and self.reproducible:
+            raise ValueError("a run with ranking drift cannot be reproducible")
+        if self.selection_eligible and not self.reproducible:
+            raise ValueError("a non-reproducible run cannot be selection eligible")
+
+    @property
+    def acceptance_blind_ready(self) -> bool:
+        return is_formal_blind_run(self.judgement_visibility, self.split)
 
 
 @dataclass(frozen=True)
@@ -124,6 +155,7 @@ def _build_run(
     rss_after: PeakRssReading | None = None,
 ) -> EvaluationRun:
     evaluated_tuple = tuple(evaluated)
+    reproducible = all(item.warm_rank_drift_count == 0 for item in evaluated_tuple)
     slices = sorted({tag for item in evaluated_tuple for tag in item.slice_tags})
     per_slice = {
         tag: _aggregate([item for item in evaluated_tuple if tag in item.slice_tags])
@@ -142,6 +174,8 @@ def _build_run(
         queries=evaluated_tuple,
         overall=_aggregate(evaluated_tuple),
         per_slice=per_slice,
+        reproducible=reproducible,
+        selection_eligible=reproducible,
         peak_rss_before_bytes=rss_before.bytes if rss_before else None,
         peak_rss_after_bytes=rss_after.bytes if rss_after else None,
         peak_rss_method=method,
@@ -275,6 +309,8 @@ def evaluate_ann_recall(
         raise ValueError("Exact and ANN runs must use the identical dataset hash")
     if exact_run.split != ann_run.split:
         raise ValueError("Exact and ANN runs must use the same split")
+    if not exact_run.selection_eligible or not ann_run.selection_eligible:
+        raise ValueError("Exact and ANN runs must both be selection eligible")
 
     exact_by_id = {item.query_id: item for item in exact_run.queries}
     ann_by_id = {item.query_id: item for item in ann_run.queries}

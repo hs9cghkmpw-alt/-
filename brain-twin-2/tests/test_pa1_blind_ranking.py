@@ -19,6 +19,17 @@ class _FakeRetriever:
         return (RankedResult("mem-1", 1.0),)
 
 
+class _DriftingRetriever:
+    def __init__(self):
+        self.calls = 0
+
+    def search(self, query: str, k: int):
+        self.calls += 1
+        if self.calls == 1:
+            return (RankedResult("mem-1", 1.0),)
+        return ()
+
+
 def _dataset():
     return EvaluationDataset(
         version="heldout-v1",
@@ -80,6 +91,8 @@ def test_blind_model_side_evidence_contains_no_query_text_or_judgements() -> Non
     assert "relevance" not in serialized
     assert "must_hit" not in serialized
     assert evidence["queries"][0]["ranked_ids"] == ["mem-1"]
+    assert evidence["reproducible"] is True
+    assert evidence["selection_eligible"] is True
 
 
 def test_private_scoring_reconstructs_metrics_and_final_report_is_redacted() -> None:
@@ -103,6 +116,55 @@ def test_private_scoring_reconstructs_metrics_and_final_report_is_redacted() -> 
     assert payload["per_slice_redacted"] is True
     assert payload["queries"] == []
     assert payload["failed_must_hit_queries"] == []
+    assert payload["reproducible"] is True
+    assert payload["selection_eligible"] is True
+
+
+def test_blind_ranking_drift_is_typed_selection_ineligible() -> None:
+    runner_raw, private = _runner_and_private()
+    runner = runner_input_from_mapping(runner_raw)
+    clocks = iter((0.0, 0.1, 1.0, 1.1))
+    rss = iter((PeakRssReading(100, "test"), PeakRssReading(200, "test")))
+    evidence = run_blind_rankings(
+        runner,
+        _DriftingRetriever(),
+        _manifest(runner_raw),
+        warm_repeats=1,
+        clock=lambda: next(clocks),
+        rss_reader=lambda: next(rss),
+    )
+    assert evidence["queries"][0]["warm_rank_drift_count"] == 1
+    assert evidence["reproducible"] is False
+    assert evidence["selection_eligible"] is False
+    run, manifest = score_blind_evidence(runner_raw, private, evidence)
+    assert run.reproducible is False
+    assert run.selection_eligible is False
+    payload = report_payload(run, manifest)
+    assert payload["acceptance_blind_ready"] is True
+    assert payload["selection_eligible"] is False
+
+
+def test_blind_scoring_rejects_forged_reproducibility_state() -> None:
+    runner_raw, private = _runner_and_private()
+    runner = runner_input_from_mapping(runner_raw)
+    clocks = iter((0.0, 0.1, 1.0, 1.1))
+    rss = iter((PeakRssReading(100, "test"), PeakRssReading(200, "test")))
+    evidence = run_blind_rankings(
+        runner,
+        _DriftingRetriever(),
+        _manifest(runner_raw),
+        warm_repeats=1,
+        clock=lambda: next(clocks),
+        rss_reader=lambda: next(rss),
+    )
+    evidence["reproducible"] = True
+    evidence["selection_eligible"] = True
+    try:
+        score_blind_evidence(runner_raw, private, evidence)
+    except BlindRankingError as exc:
+        assert "does not match" in str(exc)
+    else:
+        raise AssertionError("expected BlindRankingError")
 
 
 def test_tampered_ranking_evidence_runner_commitment_is_rejected() -> None:

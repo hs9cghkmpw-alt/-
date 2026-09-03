@@ -7,6 +7,7 @@ from .dataset import (
     EvaluationMemory,
     EvaluationQuery,
     dataset_sha256,
+    is_formal_blind_run,
     load_dataset,
 )
 from .manifest import ExperimentManifest, ManifestValidationError, build_manifest
@@ -47,6 +48,7 @@ __all__ = [
     "evaluate_ann_recall",
     "evaluate_rankings",
     "evaluate_retriever",
+    "is_formal_blind_run",
     "load_dataset",
     "metric_ci95",
     "paired_metric_delta",

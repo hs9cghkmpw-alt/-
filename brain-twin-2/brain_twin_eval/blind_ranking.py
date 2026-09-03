@@ -187,6 +187,7 @@ def run_blind_rankings(
                 drift += 1
         evidence.append(BlindQueryEvidence(query.query_id, ranked_ids, cold_elapsed, tuple(warm_latencies), drift))
     rss_after = rss_reader()
+    reproducible = all(item.warm_rank_drift_count == 0 for item in evidence)
     return {
         "schema": 1,
         "runner_sha256": runner.runner_sha256,
@@ -197,6 +198,8 @@ def run_blind_rankings(
         "manifest": manifest_to_dict(manifest),
         "k": k,
         "warm_repeats": warm_repeats,
+        "reproducible": reproducible,
+        "selection_eligible": reproducible,
         "queries": [{
             "query_id": item.query_id,
             "ranked_ids": list(item.ranked_ids),
@@ -277,6 +280,24 @@ def score_blind_evidence(runner_raw: Mapping[str, Any], private_judgements: Mapp
             raise BlindRankingError(f"{query_id} warm_rank_drift_count must be non-negative")
         timed_queries.append(replace(base_by_id[query_id], latency_seconds=float(cold), warm_latency_seconds=tuple(float(value) for value in warm), warm_rank_drift_count=drift))
 
+    reproducible = evidence_raw.get("reproducible")
+    selection_eligible = evidence_raw.get("selection_eligible")
+    if not isinstance(reproducible, bool):
+        raise BlindRankingError("ranking evidence reproducible must be boolean")
+    if not isinstance(selection_eligible, bool):
+        raise BlindRankingError("ranking evidence selection_eligible must be boolean")
+    observed_reproducible = all(
+        item.warm_rank_drift_count == 0 for item in timed_queries
+    )
+    if reproducible != observed_reproducible:
+        raise BlindRankingError(
+            "ranking evidence reproducible does not match warm ranking drift"
+        )
+    if selection_eligible != observed_reproducible:
+        raise BlindRankingError(
+            "ranking evidence selection_eligible does not match reproducibility"
+        )
+
     resources = evidence_raw.get("resources")
     if not isinstance(resources, Mapping):
         raise BlindRankingError("ranking evidence resources must be an object")
@@ -288,6 +309,7 @@ def score_blind_evidence(runner_raw: Mapping[str, Any], private_judgements: Mapp
         dataset_version=base_run.dataset_version, dataset_sha256=base_run.dataset_sha256,
         judgement_visibility=base_run.judgement_visibility, split="blind", queries=tuple(timed_queries),
         overall=base_run.overall, per_slice=base_run.per_slice,
+        reproducible=reproducible, selection_eligible=selection_eligible,
         peak_rss_before_bytes=before, peak_rss_after_bytes=after,
         peak_rss_method=resources.get("peak_rss_method"),
     )

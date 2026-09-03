@@ -280,3 +280,16 @@ Rules:
 - Commit: this commit.
 - Known issues: seed fixture is a contract scaffold, not the final 300–500 Memory / 120-query adjudicated corpus; real Qwen/BGE/E5/Nomic/GTE runs, tokenizer-aware 512/2k/8k cases, judge calibration, and numeric Windows acceptance budgets remain deferred. PA2/PA3 are not started.
 - Next: **PA1 evaluation harness implemented; external review pending.** Do not begin real candidate model benchmarking, PA2, PA3, PA4, or Phase 5 until explicitly authorized after review.
+
+## 2026-09-04 — Codex (たなか) — PA1 evidence-integrity focused repair
+
+- Branch: `brain-twin-dev`
+- Base: `dae2342e9e3b08316e5fa2b4595ecaaa5affe090`
+- Scope: Issue #2で繰り返しSTOP指定された2件だけを修正。Formal Blind判定の誤ready化と、warm ranking driftがあっても候補選定に残れる経路を閉じる。モデル取得・Windows matrix実行・PA2+・本番設定/Vault変更は対象外。
+- Changed: held-out + blindの共通predicateをdataset/run/report/redaction/formal acceptanceへ統一。`EvaluationRun`、report、sealed blind evidenceに`reproducible`/`selection_eligible`を追加し、非ゼロdriftを診断値付きで失格化。matrix winner、paired candidate比較、critical slice、formal acceptance、ANN比較、PowerShell orchestrationをfail-closed化し、policyのdrift許容値を0に固定。
+- Files: `brain_twin_eval/{dataset,runner,report,blind,blind_ranking,acceptance,critical_slice,matrix_summary}.py`、公開API、PA1 PowerShell 3本、関連テスト、`README.md`、`docs/JAPANESE_RETRIEVAL_EVALUATION.md`、`docs/CURRENT_STATE.md`、本WORKLOG。
+- Tests: 変更前 `558 passed`; focused `52 passed`; full local `571 passed`（最終差分後に再実行予定）。実Vaultには触れていない。
+- CI: exact repair SHAのpush後に実行・照合予定。
+- Commit: this commit.
+- Known issues: 修正自体は独立再レビュー前。exact-SHA CI、Critical=0/Major=0判定、Windows実機証拠は未検証。Organizer正式閾値、PA2/PA3、Production Vector Searchも未承認のまま。
+- Next: 最終ローカル全テストとdiff確認後にcommit/pushし、exact-SHA CIを確認して独立レビューへ渡す。Critical/Major=0まではWindows matrixを選定証拠として使わない。

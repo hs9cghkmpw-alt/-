@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -74,3 +75,11 @@ def test_paired_metric_delta_rejects_unavailable_metric():
     run = evaluate_rankings(dataset, _perfect_rankings(dataset), split="dev")
     with pytest.raises(ValueError, match="unsupported metric"):
         paired_metric_delta(run, run, "not_a_metric", iterations=10)
+
+
+def test_paired_metric_delta_rejects_selection_ineligible_run():
+    dataset = _dataset()
+    run = evaluate_rankings(dataset, _perfect_rankings(dataset), split="dev")
+    ineligible = replace(run, reproducible=False, selection_eligible=False)
+    with pytest.raises(ValueError, match="selection eligible"):
+        paired_metric_delta(run, ineligible, "ndcg_at_10", iterations=10)

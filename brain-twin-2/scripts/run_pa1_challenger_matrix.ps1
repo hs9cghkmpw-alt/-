@@ -140,6 +140,9 @@ foreach ($run in $RunnableRuns) {
     --out-md (Join-Path $OutputRoot "matrix_summary.md")
 if ($LASTEXITCODE -ne 0) { throw "challenger summary failed" }
 $Summary = Get-Content (Join-Path $OutputRoot "matrix_summary.json") -Raw | ConvertFrom-Json
+if ($null -eq $Summary.dense_winner) {
+    throw "No selection-eligible challenger. Inspect ranking drift in matrix_summary.md."
+}
 
 $os = $null
 $cpu = $null

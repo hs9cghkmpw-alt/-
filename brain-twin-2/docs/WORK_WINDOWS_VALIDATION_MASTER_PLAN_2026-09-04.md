@@ -2,7 +2,10 @@
 
 Date: 2026-09-04
 
-Status: **execution plan / evidence contract**. This document does not claim that Windows model execution has already happened.
+Status: **execution plan / evidence contract; execution routing PAUSED pending PA1 focused-repair exact-SHA CI and independent Critical=0/Major=0 re-review**. This document does not claim that Windows model execution has already happened.
+
+The stages below remain the intended order after that gate clears. They are not current authorization to
+run the full Retrieval/Organizer matrix or select/freeze a model. `docs/CURRENT_STATE.md` is the live routing source.
 
 ## 1. 目的
 
@@ -26,7 +29,7 @@ Brain Twin のモデル選定を「動いた」「ベンチが良かった」で
 
 ### Organizer
 
-- 192件の privacy-safe synthetic open-v2 corpus がある。
+- 240件の privacy-safe synthetic open-v3 corpus がある（open-v2 192件 + stress 48件）。
 - strict JSON / memory-worthy / type / topic / entity / date / importance / link / calibration を評価できる。
 - Formal Blind は model-side package と private scoring を分離済み。
 - Qwen3.5 0.8B / 2B / 4B、Qwen3-4B-Instruct-2507 を immutable revision で catalog 化済み。
@@ -46,7 +49,8 @@ Brain Twin のモデル選定を「動いた」「ベンチが良かった」で
 
 ### B. 実用負荷
 
-現在の open corpus だけでは、次を十分に代表しない。
+open-v3は次の入力形状をsynthetic stress sliceとして追加済みだが、Windows実行証拠・実データ代表性・
+長時間負荷をまだ証明していない。
 
 - 長い雑記・話題が途中で飛ぶ入力。
 - 改行、箇条書き、URL、JSON、コード断片、絵文字を含む入力。
@@ -56,7 +60,8 @@ Brain Twin のモデル選定を「動いた」「ベンチが良かった」で
 - 2つ以上の予定 / 決定 / 否定が同居するケース。
 - 長時間連続処理後の thermal / memory drift。
 
-これらは open-development stress corpus として追加し、Formal Blind とは分離する。
+これらはFormal Blindとは分離したopen-development診断であり、追加済みという事実だけでは
+モデル品質・実用性・本番採用を証明しない。
 
 ### C. Runtime代表性
 
@@ -65,6 +70,12 @@ Organizer の最初の基準実装は Transformers CPU / quantization=none。こ
 0.8B / 2B の品質が十分でも速度・RAMが悪ければ、同じ frozen model/prompt/schema を使って量子化 runtime を別 identity として比較する必要がある。逆に reference runtime が遅いだけでモデル品質を否定してはいけない。
 
 ## 4. 実行順序
+
+### Stage実行前の外部レビューgate
+
+Retrieval評価のFormal Blind誤ready化とranking drift選定経路に対するfocused repairが、
+exact-SHA CI成功かつ独立レビューCritical=0/Major=0になるまでは、以下を実行しても
+**診断以外には使えない**。現時点では新規matrix実行自体を停止し、review handoffを優先する。
 
 ### Stage 0 — Windows Evidence Preconditions
 
@@ -80,6 +91,8 @@ Organizer の最初の基準実装は Transformers CPU / quantization=none。こ
 失敗したらその場で STOP。バージョンや prompt を勝手に変えて続行しない。
 
 ### Stage 1 — Retrieval full open matrix
+
+**現在PAUSED**。独立レビューgate通過後にのみ再開する。
 
 ```powershell
 git switch brain-twin-dev

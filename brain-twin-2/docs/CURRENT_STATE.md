@@ -1,6 +1,6 @@
 # Brain Twin 2 — Current State
 
-Last updated: 2026-08-29
+Last updated: 2026-09-04
 
 ## Active development context
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-29
 - Phase 2 — Automatic Memory Worker / Entity / Link generation: **COMPLETE**
 - Phase 3 — Retrieval: **COMPLETE**
 - Phase 4 — Vector Retrieval Core (4A–4D): **GO / COMPLETE**
-- PA1 — Japanese retrieval/model acceptance: **TOOLING GO; REAL WINDOWS EVIDENCE PENDING**
+- PA1 — Japanese retrieval/model acceptance: **FOCUSED EVIDENCE REPAIR IMPLEMENTED LOCALLY; EXACT-SHA CI / INDEPENDENT RE-REVIEW PENDING**
 - Production Vector Search activation: **PENDING**
 
 Phase 4 completion is not production activation. No production embedding provider, reranker, or ANN backend has been activated.
@@ -35,6 +35,40 @@ See `docs/ADR_BRAIN_TWIN_TARGET_ARCHITECTURE.md`.
 - persistent Memory SOT: Markdown / Obsidian Vault.
 
 The organizer LLM remains undecided. Architecture preference never overrides a failed quality/resource gate.
+
+## Latest verified implementation state
+
+- Starting HEAD for the focused repair: `dae2342e9e3b08316e5fa2b4595ecaaa5affe090`
+- Starting exact-SHA Actions run: `33787710627` — **success**, 558 passed
+- Focused repair local result: **571 passed**
+- Repair commit / exact-SHA Actions run: pending this handoff's commit and push
+- The real Vault, production `brain_twin/`, model artifacts and production embedding configuration were not changed.
+
+## Active PA1 evidence-integrity gate
+
+Issue #2's two independent-review Majors were still present at the starting HEAD. This focused repair
+implements both, without starting a model matrix or PA2+ work:
+
+1. One authoritative Formal Blind predicate now requires held-out judgements and `split == "blind"`.
+   Dataset readiness, run readiness, report readiness/redaction and formal acceptance use that contract;
+   held-out `dev` and all-split runs have negative regression coverage.
+2. Any non-zero warm ranking drift now produces typed `reproducible=false` and
+   `selection_eligible=false` state while preserving the cold metrics and exact drift count for diagnosis.
+   Reports, sealed blind evidence, open-matrix winner selection, critical-slice gates, formal acceptance
+   and paired candidate / ANN comparison fail closed on that state. Formal policy cannot allow a non-zero drift budget.
+
+The implementation is **not self-approved**. PA1 candidate/model selection remains blocked until the
+exact repair SHA has executable green CI and independent review returns Critical=0 / Major=0.
+
+## Organizer preparation state
+
+- Open-development corpus v3 has 240 synthetic samples, including prompt-injection-as-data and
+  long/multiline/JSON/code/mixed-language stress slices.
+- Windows artifact-integrity, clean-Git, machine/load evidence and per-model RSS-isolation tooling is present.
+- No Organizer model winner has been selected; numeric formal acceptance thresholds remain unfrozen and
+  real Windows evidence is pending.
+- Preserve this preparation, but do not expand or treat it as production-integration authorization while
+  the PA1 independent-review gate above remains open.
 
 ## PA1 evaluation foundation
 
@@ -116,19 +150,16 @@ Matrix contract: `docs/PA1_CHALLENGER_MATRIX.md`
 
 ## Next authorized action
 
-When a Windows evaluation PC is available, use one clean checkout and run the full open-development matrix:
+1. Commit and push only this focused two-Major repair.
+2. Verify GitHub Actions against the exact pushed repair SHA.
+3. Route that exact SHA and CI evidence to independent review.
+4. Only after Critical=0 / Major=0 may the prepared Windows open-development matrix be used for
+   candidate selection. Runs made earlier remain diagnostic only.
 
-```powershell
-git switch brain-twin-dev
-git pull --ff-only origin brain-twin-dev
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\brain-twin-2\scripts\run_pa1_full_open_matrix.ps1
-```
+Do not start the full Windows matrix, model selection/freeze, PA2/PA3, production activation, `ask`,
+Contradiction Detection, Memory Consolidation, smartphone integration or Phase 5 before that review gate.
 
-That orchestrates the prepared Qwen matrix and the reviewed standard challengers under one Git/dataset identity and produces a combined open-development summary.
-
-Separately, Nomic/GTE must first use `scripts/smoke_pa1_remote_code_candidate.py` against their pinned local artifacts. Do not add them to normal comparison merely because acquisition succeeded.
-
-## Gates after Windows open-development execution
+## Gates after independent re-review and Windows open-development execution
 
 1. Review Qwen English/Japanese/no-instruction results.
 2. Review Qwen allowed-dimension sweep.

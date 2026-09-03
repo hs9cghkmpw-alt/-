@@ -6,9 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from brain_twin_eval.dataset import DatasetValidationError, dataset_from_mapping, dataset_sha256, load_dataset
+from brain_twin_eval.dataset import (
+    DatasetValidationError,
+    dataset_from_mapping,
+    dataset_sha256,
+    is_formal_blind_run,
+    load_dataset,
+)
 from brain_twin_eval.manifest import ManifestValidationError, build_manifest
-from brain_twin_eval.report import report_payload
+from brain_twin_eval.report import report_markdown, report_payload
 from brain_twin_eval.resources import PeakRssReading, peak_rss_reading
 from brain_twin_eval.runner import RankedResult, evaluate_ann_recall, evaluate_rankings, evaluate_retriever
 
@@ -85,6 +91,28 @@ def test_judgement_visibility_changes_canonical_dataset_identity():
     assert dataset_sha256(dataset) != dataset_sha256(held_out)
 
 
+def test_dataset_formal_blind_readiness_requires_held_out_blind_only_queries():
+    held_out_mixed = replace(_dataset(), judgement_visibility="held_out")
+    held_out_blind = replace(
+        held_out_mixed, queries=held_out_mixed.queries_for_split("blind")
+    )
+    assert held_out_mixed.acceptance_blind_ready is False
+    assert held_out_blind.acceptance_blind_ready is True
+    assert is_formal_blind_run("held_out", "blind") is True
+    assert is_formal_blind_run("held_out", "dev") is False
+    assert is_formal_blind_run("held_out", None) is False
+
+
+@pytest.mark.parametrize("split", ["dev", None])
+def test_held_out_non_blind_report_is_not_acceptance_ready_or_redacted(split):
+    dataset = replace(_dataset(), judgement_visibility="held_out")
+    run = evaluate_rankings(dataset, _perfect_rankings(dataset), split=split)
+    payload = report_payload(run, _manifest(dataset))
+    assert payload["acceptance_blind_ready"] is False
+    assert payload["query_details_redacted"] is False
+    assert payload["per_slice_redacted"] is False
+
+
 def test_held_out_blind_report_redacts_query_rankings_failure_and_slice_details():
     dataset = replace(_dataset(), judgement_visibility="held_out")
     run = evaluate_rankings(dataset, _perfect_rankings(dataset), split="blind")
@@ -101,6 +129,16 @@ def test_held_out_blind_report_redacts_query_rankings_failure_and_slice_details(
 class _StableRetriever:
     def search(self, query: str, k: int):
         return [RankedResult("mem-001", 1.0)]
+
+
+class _DriftingRetriever:
+    def __init__(self):
+        self.calls = 0
+
+    def search(self, query: str, k: int):
+        self.calls += 1
+        memory_id = "mem-001" if self.calls % 2 else "mem-002"
+        return [RankedResult(memory_id, 1.0)]
 
 
 def test_live_runner_records_first_call_warm_samples_and_process_peak_rss():
@@ -125,6 +163,31 @@ def test_live_runner_records_first_call_warm_samples_and_process_peak_rss():
     assert all(item.latency_seconds is not None for item in run.queries)
     assert all(len(item.warm_latency_seconds) == 2 for item in run.queries)
     assert all(item.warm_rank_drift_count == 0 for item in run.queries)
+    assert run.reproducible is True
+    assert run.selection_eligible is True
+
+
+def test_ranking_drift_preserves_diagnostics_but_blocks_selection():
+    base = _dataset()
+    dataset = replace(base, queries=(base.queries[0],))
+    clock_values = iter([0.0, 0.1, 1.0, 1.1])
+    rss_values = iter([PeakRssReading(100, "test"), PeakRssReading(200, "test")])
+    run = evaluate_retriever(
+        dataset,
+        _DriftingRetriever(),
+        k=10,
+        warm_repeats=1,
+        clock=lambda: next(clock_values),
+        rss_reader=lambda: next(rss_values),
+    )
+    assert run.queries[0].warm_rank_drift_count == 1
+    assert run.reproducible is False
+    assert run.selection_eligible is False
+    payload = report_payload(run, _manifest(dataset))
+    assert payload["reproducible"] is False
+    assert payload["selection_eligible"] is False
+    assert payload["latency"]["warm_rank_drift_count"] == 1
+    assert "diagnostic only" in report_markdown(run, _manifest(dataset))
 
 
 def test_report_uses_true_median_and_nearest_rank_p95_for_warm_samples():

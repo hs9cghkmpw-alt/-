@@ -36,10 +36,10 @@ def payload_sha256(payload: Mapping[str, Any]) -> str:
 
 
 def create_blind_packages(dataset: EvaluationDataset) -> BlindPackages:
-    if dataset.judgement_visibility != "held_out":
-        raise BlindPackageError("formal blind source dataset must use held_out judgements")
-    if not dataset.queries or any(query.split != "blind" for query in dataset.queries):
-        raise BlindPackageError("formal blind source dataset must contain only blind-split queries")
+    if not dataset.acceptance_blind_ready:
+        raise BlindPackageError(
+            "formal blind source dataset must use held_out judgements and contain only blind-split queries"
+        )
 
     source_sha = dataset_sha256(dataset)
     runner: dict[str, Any] = {

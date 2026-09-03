@@ -79,6 +79,9 @@ Write-Host "`n=== Stage C: combined open-development comparison ==="
     --out-md (Join-Path $OutputRoot "combined_matrix_summary.md")
 if ($LASTEXITCODE -ne 0) { throw "combined matrix summary failed" }
 $Summary = Get-Content (Join-Path $OutputRoot "combined_matrix_summary.json") -Raw | ConvertFrom-Json
+if ($null -eq $Summary.dense_winner -or $null -eq $Summary.overall_open_winner) {
+    throw "No selection-eligible combined winner. Drifted reports remain diagnostic only."
+}
 
 $handoff = [ordered]@{
     schema = 1

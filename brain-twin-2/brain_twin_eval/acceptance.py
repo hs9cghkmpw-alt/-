@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
 from .critical_slice import CriticalSliceError, rule_spec_sha256, rules_from_policy_mapping
+from .dataset import is_formal_blind_run
 
 
 class AcceptancePolicyError(ValueError):
@@ -211,6 +212,10 @@ def policy_from_mapping(raw: Mapping[str, Any]) -> AcceptancePolicy:
         raise AcceptancePolicyError(
             "max_warm_rank_drift_count must be a non-negative integer"
         )
+    if max_drift != 0:
+        raise AcceptancePolicyError(
+            "max_warm_rank_drift_count must be 0 because any ranking drift is selection-ineligible"
+        )
 
     warm = raw.get("max_warm_p95_seconds")
     if warm is not None:
@@ -289,6 +294,12 @@ def _metric(overall: Mapping[str, Any], field: str) -> float:
     if value is None:
         raise AcceptancePolicyError(f"report.overall.{field} is required")
     return _fraction(value, f"report.overall.{field}")
+
+
+def _boolean(value: Any, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise AcceptancePolicyError(f"{field} must be boolean")
+    return value
 
 
 def _critical_attestation_gates(
@@ -391,6 +402,10 @@ def evaluate_acceptance(
     must_hit = _metric(overall, "must_hit_at_5")
     false_positive = _metric(overall, "false_positive_at_5")
     config_sha = retrieval_config_sha256(manifest)
+    reproducible = _boolean(payload.get("reproducible"), "report.reproducible")
+    selection_eligible = _boolean(
+        payload.get("selection_eligible"), "report.selection_eligible"
+    )
 
     gates = [
         GateResult(
@@ -459,11 +474,33 @@ def evaluate_acceptance(
             drift,
             policy.max_warm_rank_drift_count,
         ),
+        GateResult(
+            "reproducible",
+            reproducible and drift == 0,
+            reproducible,
+            True,
+        ),
+        GateResult(
+            "selection_eligible",
+            selection_eligible and reproducible and drift == 0,
+            selection_eligible,
+            True,
+        ),
     ]
 
     if formal:
+        formal_blind_run = is_formal_blind_run(
+            str(payload.get("judgement_visibility", "")), payload.get("split")
+        )
         gates.extend(
             [
+                GateResult(
+                    "acceptance_blind_ready",
+                    payload.get("acceptance_blind_ready") is True
+                    and formal_blind_run,
+                    payload.get("acceptance_blind_ready"),
+                    True,
+                ),
                 GateResult(
                     "held_out_judgements",
                     payload.get("judgement_visibility") == "held_out",

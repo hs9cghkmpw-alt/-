@@ -117,6 +117,8 @@ def paired_metric_delta(
         raise ValueError("paired runs must use the identical dataset hash")
     if baseline.split != candidate.split:
         raise ValueError("paired runs must use the same split")
+    if not baseline.selection_eligible or not candidate.selection_eligible:
+        raise ValueError("paired runs must both be selection eligible")
 
     baseline_by_id = {item.query_id: item for item in baseline.queries}
     candidate_by_id = {item.query_id: item for item in candidate.queries}
