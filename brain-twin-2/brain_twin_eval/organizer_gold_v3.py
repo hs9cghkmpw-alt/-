@@ -65,7 +65,7 @@ def build_organizer_open_v3() -> OrganizerDataset:
                 "ネットワーク断時の挙動、利用者が整理しなくてよい入力体験を順番に検討した。"
                 "途中で別の案も出たが、原文を残すことと派生情報を再生成可能にする原則は変えない。"
             ]
-            * 8
+            * 12
         )
         samples.append(
             _sample(
