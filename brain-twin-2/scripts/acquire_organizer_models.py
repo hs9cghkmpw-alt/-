@@ -26,6 +26,7 @@ from brain_twin_eval.organizer_matrix import (  # noqa: E402
     load_organizer_model_matrix,
     organizer_candidate_directory_name,
 )
+from brain_twin_eval.organizer_run_evidence import artifact_tree_fingerprint  # noqa: E402
 
 
 def default_model_root() -> Path:
@@ -79,8 +80,12 @@ def acquire_organizer_candidate(
             f"snapshot_download returned unexpected destination {downloaded}; expected {target.resolve()}"
         )
 
+    # Full local artifact fingerprint is intentionally computed before writing the pin
+    # manifest. The manifest itself and volatile .cache metadata are excluded by the
+    # fingerprint helper, so the same digest can be verified before every evidence run.
+    artifact = artifact_tree_fingerprint(target, manifest_name=PIN_MANIFEST)
     manifest: dict[str, Any] = {
-        "schema": 1,
+        "schema": 2,
         "candidate_id": candidate.candidate_id,
         "repo_id": candidate.model_name,
         "revision": candidate.revision,
@@ -88,6 +93,9 @@ def acquire_organizer_candidate(
         "trust_remote_code": candidate.trust_remote_code,
         "catalog_sha256": catalog_sha256,
         "runtime_policy": "evaluation-loads-local-files-only",
+        "artifact_sha256": artifact.sha256,
+        "artifact_file_count": artifact.file_count,
+        "artifact_bytes": artifact.total_bytes,
     }
     (target / PIN_MANIFEST).write_text(
         json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",

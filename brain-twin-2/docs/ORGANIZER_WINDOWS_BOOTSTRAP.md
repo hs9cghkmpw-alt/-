@@ -55,30 +55,46 @@ No model is downloaded by the setup script.
 
 This intentionally downloads only the pinned Qwen3.5-0.8B snapshot, then runs an 8-sample open smoke with determinism checks. Model execution is forced offline/local-files-only after acquisition.
 
-Do **not** download 2B/4B models merely because the environment installation succeeded. First inspect whether 0.8B actually loads, generates strict JSON, stays deterministic, and produces plausible latency/RSS evidence.
+The acquisition/run boundary now also records and verifies a **full local model artifact SHA-256 tree**. The digest covers non-cache model files plus relative paths and byte sizes; volatile Hugging Face `.cache` metadata and the pin manifest itself are excluded. If local model bytes change after acquisition, the evidence run stops before model load.
+
+Open evidence is written under a unique directory containing dataset version, Git SHA prefix and UTC timestamp. The runner also records exact clean Git HEAD, non-identifying machine evidence, artifact-verification time, model-load time/RSS, generation latency/RSS and determinism.
+
+Do **not** download 2B/4B models merely because the environment installation succeeded. First inspect whether 0.8B actually loads, generates strict JSON, stays deterministic, and produces plausible resource evidence.
 
 ## After a clean 0.8B smoke
 
-Only then acquire 2B and run the core comparison:
+Use the isolated core comparison:
 
 ```powershell
-.\.venv-organizer\Scripts\python.exe scripts\acquire_organizer_models.py --candidate-id qwen3.5-2b
-.\.venv-organizer\Scripts\python.exe scripts\run_organizer_open_matrix.py --tier core
+.\scripts\run_organizer_core_windows.ps1
 ```
 
-The full core run uses all 192 open-v2 synthetic organizer samples. It is development evidence, not formal blind acceptance.
+This acquires the pinned 0.8B/2B core models unless `-SkipAcquire` is supplied, then launches **one fresh Python process per candidate**. This isolation is intentional: Torch allocator history and process `PeakWorkingSetSize` from the first model must not contaminate the second model's RAM evidence.
+
+The full core run uses all 192 open-v2 synthetic organizer samples by default. A nonzero `-SampleLimit` is diagnostic/smoke evidence only.
+
+The core runner refuses mixed Git SHA, dataset SHA/version or sample protocols when combining candidate summaries. It does not automatically declare a winner.
 
 ## Stop conditions
 
 Stop rather than improvising if any of these occur:
 
 - exact model SHA mismatch;
+- local model artifact SHA/file-count/byte-count mismatch;
 - package/API preflight failure;
 - unexpected remote-code request;
 - non-local model access during execution;
+- dirty tracked Git worktree;
 - loader crash;
 - repeated invalid JSON / Markdown-fenced output that prevents meaningful scoring;
 - nondeterministic repeat output under the frozen greedy settings;
-- memory/RAM pressure severe enough to destabilize the PC.
+- memory/RAM pressure severe enough to destabilize the PC;
+- mixed Git/dataset identities across a comparison.
 
 Capture the error/output and review it before changing versions, prompts, generation settings or model code. Any such change affects experiment identity and must be deliberate.
+
+## Master evidence plan
+
+For Retrieval + Organizer + missing stress/repeatability/formal evidence, use:
+
+`docs/WORK_WINDOWS_VALIDATION_MASTER_PLAN_2026-09-04.md`

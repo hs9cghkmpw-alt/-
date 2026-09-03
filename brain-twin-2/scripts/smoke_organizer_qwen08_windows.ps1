@@ -23,7 +23,8 @@ if ($LASTEXITCODE -ne 0) { throw "Organizer Windows preflight failed." }
 & $EvalPython (Join-Path $ProjectRoot "scripts\acquire_organizer_models.py") --candidate-id qwen3.5-0.8b
 if ($LASTEXITCODE -ne 0) { throw "Qwen3.5-0.8B acquisition failed." }
 
-# Model execution itself is local-files-only/offline.
+# Model execution itself is local-files-only/offline. The runner additionally verifies
+# a full local artifact SHA-256 tree before model load and writes a unique evidence dir.
 & $EvalPython (Join-Path $ProjectRoot "scripts\run_organizer_open_matrix.py") `
     --candidate-id qwen3.5-0.8b `
     --sample-limit $SampleLimit `
@@ -33,7 +34,6 @@ if ($LASTEXITCODE -ne 0) { throw "Qwen3.5-0.8B organizer smoke failed." }
 
 Write-Host ""
 Write-Host "[OK] Qwen3.5-0.8B organizer smoke completed."
-Write-Host "Do not download the 2B model yet if this smoke produced loader/schema/runtime errors."
-Write-Host "If the smoke is clean, the next comparison step is:"
-Write-Host "  .\.venv-organizer\Scripts\python.exe scripts\acquire_organizer_models.py --candidate-id qwen3.5-2b"
-Write-Host "  .\.venv-organizer\Scripts\python.exe scripts\run_organizer_open_matrix.py --tier core"
+Write-Host "Do not download the 2B model yet if this smoke produced loader/schema/runtime/artifact errors."
+Write-Host "If the smoke is clean, use the isolated core comparison runner:"
+Write-Host "  .\scripts\run_organizer_core_windows.ps1"
