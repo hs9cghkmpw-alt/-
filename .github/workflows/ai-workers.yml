@@ -1,0 +1,35 @@
+name: AI Workers
+on:
+  issue_comment:
+    types: [created]
+permissions: {contents: write, pull-requests: write, issues: write, actions: read, id-token: write}
+jobs:
+  claude:
+    if: github.event.issue.pull_request == null && startsWith(github.event.comment.body, '/ai claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          trigger_phrase: /ai claude
+          branch_prefix: claude/
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --max-turns 40
+            --append-system-prompt "Managed AI worker for the Second Brain / Brain Twin stream. Read Issue, root AGENTS.md/CLAUDE.md, brain-twin-2 Source of Truth and newest AI-HANDOFF first. Respect the active Brain Twin work branch and avoid unrelated repo areas. Use a focused feature branch/PR, test, never merge/approve/close, expose secrets, weaken tests, or infer PASS. Leave complete AI-HANDOFF."
+  codex:
+    if: github.event.issue.pull_request == null && startsWith(github.event.comment.body, '/ai codex') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    permissions: {contents: read, issues: write, actions: read}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: :workspace
+          output-file: codex-final.md
+          prompt: "Independently review Brain Twin Issue #${{ github.event.issue.number }}. Read Issue/comments, root instructions, brain-twin-2 SoT, newest HANDOFF, exact evidence and tests. Classify Critical/Major/Minor/Suggestion; Critical/Major=FAIL. No merge/approve/close, secret exposure, weakened tests or inferred PASS. State exact reviewed SHA/ref, unverified items, verdict and next owner."
+      - env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh issue comment "${{ github.event.issue.number }}" --body-file codex-final.md
