@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -33,15 +34,41 @@ class MatrixEntry:
     selection_eligible: bool
     report_path: str
 
+    def __post_init__(self) -> None:
+        # Validate at the value-object boundary too: callers may construct entries
+        # directly instead of going through the JSON report parser.
+        drift = self.warm_rank_drift_count
+        if isinstance(drift, bool) or not isinstance(drift, int) or drift < 0:
+            raise MatrixSummaryError("warm_rank_drift_count must be a non-negative integer")
+        _boolean(self.reproducible, field="reproducible")
+        _boolean(self.selection_eligible, field="selection_eligible")
+        if self.reproducible != (drift == 0):
+            raise MatrixSummaryError("reproducible does not match warm ranking drift")
+        if self.selection_eligible and not self.reproducible:
+            raise MatrixSummaryError("non-reproducible report cannot be selection eligible")
+        for field in ("recall_at_5", "mrr_at_10", "ndcg_at_10", "false_positive_at_5"):
+            _number(getattr(self, field), field=field)
+        if self.must_hit_at_5 is not None:
+            _number(self.must_hit_at_5, field="must_hit_at_5")
+        if self.warm_p95_seconds is not None:
+            _number(self.warm_p95_seconds, field="warm.p95_seconds", upper=None)
+
 
 class MatrixSummaryError(ValueError):
     pass
 
 
-def _number(value: Any, *, field: str) -> float:
+def _number(value: Any, *, field: str, upper: float | None = 1.0) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise MatrixSummaryError(f"{field} must be numeric")
-    return float(value)
+    try:
+        result = float(value)
+    except OverflowError as exc:
+        raise MatrixSummaryError(f"{field} must be finite") from exc
+    if not math.isfinite(result) or result < 0 or (upper is not None and result > upper):
+        bounds = "non-negative" if upper is None else f"between 0 and {upper}"
+        raise MatrixSummaryError(f"{field} must be finite and {bounds}")
+    return result
 
 
 def _boolean(value: Any, *, field: str) -> bool:
@@ -68,27 +95,10 @@ def entry_from_payload(payload: Mapping[str, Any], *, report_path: str) -> Matri
     must_hit_raw = overall.get("must_hit_at_5")
     must_hit = None if must_hit_raw is None else _number(must_hit_raw, field="must_hit_at_5")
     warm_p95_raw = (latency.get("warm") or {}).get("p95_seconds")
-    warm_p95 = None if warm_p95_raw is None else _number(warm_p95_raw, field="warm.p95_seconds")
+    warm_p95 = None if warm_p95_raw is None else _number(warm_p95_raw, field="warm.p95_seconds", upper=None)
     drift = latency.get("warm_rank_drift_count")
-    if isinstance(drift, bool) or not isinstance(drift, int) or drift < 0:
-        raise MatrixSummaryError(
-            f"warm_rank_drift_count must be a non-negative integer in {report_path}"
-        )
-    reproducible = _boolean(
-        payload.get("reproducible"), field=f"reproducible in {report_path}"
-    )
-    selection_eligible = _boolean(
-        payload.get("selection_eligible"),
-        field=f"selection_eligible in {report_path}",
-    )
-    if reproducible != (drift == 0):
-        raise MatrixSummaryError(
-            f"reproducible does not match warm ranking drift in {report_path}"
-        )
-    if selection_eligible and not reproducible:
-        raise MatrixSummaryError(
-            f"non-reproducible report cannot be selection eligible: {report_path}"
-        )
+    reproducible = payload.get("reproducible")
+    selection_eligible = payload.get("selection_eligible")
     kind = "reranked" if backend_label == "evaluation_rerank" else "dense"
 
     return MatrixEntry(

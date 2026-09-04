@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from brain_twin_eval.matrix_summary import (
     MatrixSummaryError,
     choose_winner,
@@ -67,6 +71,46 @@ def test_entry_extracts_dense_contract() -> None:
     assert entry.kind == "dense"
     assert entry.dimension == 1024
     assert entry.base_candidate_id is None
+
+
+@pytest.mark.parametrize("field", ["ndcg", "mrr", "recall5", "must_hit", "fp5"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), -0.1, 1.1])
+def test_matrix_rejects_invalid_quality_numbers(field, value) -> None:
+    payload = _payload(experiment_id="invalid", **{field: value})
+    with pytest.raises(MatrixSummaryError):
+        summarize_payloads([("invalid.json", payload)])
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), -0.1])
+def test_matrix_rejects_invalid_latency(value) -> None:
+    with pytest.raises(MatrixSummaryError):
+        entry_from_payload(_payload(experiment_id="invalid", warm_p95=value), report_path="x.json")
+
+
+@pytest.mark.parametrize("field", ["ndcg", "warm_p95"])
+@pytest.mark.parametrize("value", [True, "0.9", 10**400])
+def test_matrix_rejects_non_numeric_or_overflowing_values(field, value) -> None:
+    with pytest.raises(MatrixSummaryError):
+        entry_from_payload(_payload(experiment_id="invalid", **{field: value}), report_path="x.json")
+
+
+@pytest.mark.parametrize("changes", [
+    {"warm_rank_drift_count": 1},
+    {"reproducible": False},
+    {"selection_eligible": "true"},
+    {"warm_rank_drift_count": False},
+    {"ndcg_at_10": float("nan")},
+])
+def test_direct_matrix_entry_cannot_bypass_validation(changes) -> None:
+    valid = entry_from_payload(_payload(experiment_id="valid"), report_path="x.json")
+    with pytest.raises(MatrixSummaryError):
+        choose_winner([replace(valid, **changes)])
+
+
+def test_matrix_accepts_quality_boundaries_and_optional_metrics() -> None:
+    payload = _payload(experiment_id="valid", ndcg=1.0, mrr=0.0, recall5=1.0,
+                       must_hit=None, fp5=0.0, warm_p95=None)
+    assert entry_from_payload(payload, report_path="x.json").selection_eligible is True
 
 
 def test_entry_extracts_reranker_base_candidate() -> None:

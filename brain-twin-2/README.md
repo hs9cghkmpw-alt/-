@@ -734,6 +734,9 @@ PA1評価系は次の契約を共有する。
 - report・sealed blind evidence・matrix summaryは上記typed stateを必須項目として検証する。
   driftがあるのにeligibleと偽装した証拠、またはtyped stateを欠く旧形式の証拠はfail-closedで拒否する。
 - formal policyの`max_warm_rank_drift_count`は`0`以外を許可しない。
+- open matrixの品質値は有限の0〜1、測定時間は有限の非負値に限定する。
+  `NaN`/無限大/範囲外値は順位づけ前に拒否する。`MatrixEntry`を直接生成する経路でも
+  同じ数値・再現性・選定資格の検証を必須とする。
 
 この契約の実装・CI成功だけではPA1モデル選定の再開を自己承認しない。独立レビューで
 Critical/Majorが0になった後にのみ、準備済みWindows open-development matrixを選定証拠として使う。

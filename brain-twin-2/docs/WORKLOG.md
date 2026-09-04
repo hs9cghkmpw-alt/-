@@ -293,3 +293,16 @@ Rules:
 - Commit: `f9cb9652afc3f4b1838074091fbad3e510821c76`。
 - Known issues: 修正自体は独立再レビュー前。Critical=0/Major=0判定、Windows実機証拠は未検証。Organizer正式閾値、PA2/PA3、Production Vector Searchも未承認のまま。
 - Next: exact repair SHAとCI証拠を独立レビューへ渡す。Critical/Major=0まではWindows matrixを実行せず、既存runも選定証拠として使わない。
+
+## 2026-09-04 — Codex (たなか) — Matrix boundary self-audit and hardening
+
+- Branch: `brain-twin-dev`
+- Base: `1165ce69ba822184d5fb146396838401f855c79a`
+- Scope: ユーザーの実機前作業継続指示。評価結果の誤採用経路の点検・修正のみ。
+- Changed: NaN/無限大/範囲外品質値・負の測定時間を拒否。`MatrixEntry`直接生成でもdrift/typed eligibilityを検証し、JSON parserだけの検査を迂回できないようにした。通常の有効な候補順位は変更しない。
+- Files: `brain_twin_eval/matrix_summary.py`, `tests/test_pa1_matrix_summary.py`, `README.md`, `docs/CURRENT_STATE.md`, 本WORKLOG。
+- Tests: baseline 571 passed。修正前に新規負例34件の失敗を確認。追加41ケースを含むfull local 612 passed; `git diff --check` clean。
+- CI: push後にexact-SHA照合し、SHA/runをIssue #2 AI-HANDOFFに記録する。開始時点のrun `33799122863`はbase SHA一致・success。
+- Commit: this commit.
+- Known issues: 自己監査であり独立レビューではない。Windows実測・モデル選定・正式blind実施は未実施。
+- Next: 最新SHAとCIを独立レビューへ渡す。実Vault・production runtime・モデル取得・PA2+は対象外のまま。

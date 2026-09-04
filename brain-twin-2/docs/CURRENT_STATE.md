@@ -45,6 +45,16 @@ The organizer LLM remains undecided. Architecture preference never overrides a f
 - Focused repair exact-SHA Actions run: `33798627068` — **success**, 571 passed in 9.55s
 - The real Vault, production `brain_twin/`, model artifacts and production embedding configuration were not changed.
 
+### Follow-up matrix boundary hardening (2026-09-04)
+
+- Base: `1165ce69ba822184d5fb146396838401f855c79a` (exact-SHA run `33799122863`: success, 571 passed).
+- Self-audit reproduced invalid numeric evidence entering open-matrix selection and direct
+  `MatrixEntry` construction bypassing drift/eligibility validation (34 negative cases failed before repair).
+- This follow-up commit rejects non-finite/out-of-range quality values and negative/non-finite latency,
+  and validates reproducibility/eligibility at the entry construction boundary, including direct callers.
+- Full local suite: **612 passed**. Exact-SHA CI is checked after push; the resulting SHA/run are recorded
+  in the latest Issue #2 AI-HANDOFF. No Windows/model execution or independent-review GO is claimed.
+
 ## Active PA1 evidence-integrity gate
 
 Issue #2's two independent-review Majors were still present at the starting HEAD. This focused repair
@@ -151,8 +161,8 @@ Matrix contract: `docs/PA1_CHALLENGER_MATRIX.md`
 
 ## Next authorized action
 
-1. Route repair SHA `f9cb9652afc3f4b1838074091fbad3e510821c76` and exact-SHA Actions run
-   `33798627068` to independent review.
+1. Route the latest Issue #2 AI-HANDOFF SHA and its exact-SHA CI to independent review, including
+   both original repair `f9cb9652afc3f4b1838074091fbad3e510821c76` and the follow-up matrix hardening.
 2. Only after Critical=0 / Major=0 may the prepared Windows open-development matrix be used for
    candidate selection. Runs made earlier remain diagnostic only.
 
