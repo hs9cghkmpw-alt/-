@@ -29,6 +29,8 @@ def _payload(
     selection_eligible: bool = True,
     dataset_sha: str = "abc",
     git_commit: str = "1" * 40,
+    judgement_visibility: str = "open",
+    split: str | None = "dev",
 ) -> dict:
     return {
         "manifest": {
@@ -47,8 +49,8 @@ def _payload(
         },
         "dataset_version": "v2",
         "dataset_sha256": dataset_sha,
-        "judgement_visibility": "open",
-        "split": "dev",
+        "judgement_visibility": judgement_visibility,
+        "split": split,
         "reproducible": reproducible,
         "selection_eligible": selection_eligible,
         "overall": {
@@ -249,3 +251,26 @@ def test_summary_is_deterministic_independent_of_input_order() -> None:
     first = summarize_payloads([a, b])
     second = summarize_payloads([b, a])
     assert first == second
+
+@pytest.mark.parametrize(
+    ("judgement_visibility", "split"),
+    [
+        ("held_out", "blind"),
+        ("held_out", "dev"),
+        ("held_out", None),
+        ("open", "blind"),
+        ("open", None),
+    ],
+)
+def test_open_matrix_rejects_non_open_development_evidence(
+    judgement_visibility: str,
+    split: str | None,
+) -> None:
+    payload = _payload(
+        experiment_id="wrong-evidence-scope",
+        judgement_visibility=judgement_visibility,
+        split=split,
+    )
+    with pytest.raises(MatrixSummaryError, match="open-development matrix requires"):
+        summarize_payloads([("wrong.json", payload)])
+

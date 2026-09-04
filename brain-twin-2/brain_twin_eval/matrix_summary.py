@@ -171,6 +171,11 @@ def summarize_payloads(items: Iterable[tuple[str, Mapping[str, Any]]]) -> dict[s
         current_commit = str(manifest.get("git_commit", ""))
         if not current_sha or not current_version or not current_commit:
             raise MatrixSummaryError(f"report lacks dataset/Git identity: {path}")
+        if current_visibility != "open" or current_split != "dev":
+            raise MatrixSummaryError(
+                "open-development matrix requires judgement_visibility='open' "
+                f"and split='dev': {path}"
+            )
         if dataset_sha is None:
             dataset_sha = current_sha
             dataset_version = current_version
