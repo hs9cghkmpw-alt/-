@@ -11,6 +11,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 .venv-organizer/
+.venv-pa1-eval/
+.venv-pc134-validation/
 venv/
 
 # Generated evaluation output
